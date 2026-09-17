@@ -11,7 +11,7 @@ Window {
     visible: true
     title: "ScriptExecutor"
 
-    Screen01 {
+    LoginScreen {
         id: mainScreen
     }
 

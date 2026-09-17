@@ -13,7 +13,15 @@ if (Qt6_VERSION VERSION_GREATER_EQUAL 6.3)
     qt_standard_project_setup()
 endif()
 
-qt_add_executable(ScriptExecutorApp src/main.cpp)
+qt_add_executable(ScriptExecutorApp
+
+src/main.cpp
+
+src/LoginData/LoginData.cpp
+
+src/LoginData/LoginData.hpp
+
+)
 
 qt_add_resources(ScriptExecutorApp "configuration"
     PREFIX "/"

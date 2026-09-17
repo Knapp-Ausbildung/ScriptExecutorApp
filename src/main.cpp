@@ -3,37 +3,40 @@
 
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlContext>
 
 #include "app_environment.h"
 #include "import_qml_components_plugins.h"
 #include "import_qml_plugins.h"
 
-int main(int argc, char *argv[])
-{
-    set_qt_environment();
+#include "LoginData/LoginData.hpp"
 
-    QGuiApplication app(argc, argv);
+int main(int argc, char *argv[]) {
+  set_qt_environment();
 
-    QQmlApplicationEngine engine;
-    const QUrl url(u"qrc:/qt/qml/Main/main.qml"_qs);
-    QObject::connect(
-        &engine,
-        &QQmlApplicationEngine::objectCreated,
-        &app,
-        [url](QObject *obj, const QUrl &objUrl) {
-            if (!obj && url == objUrl)
-                QCoreApplication::exit(-1);
-        },
-        Qt::QueuedConnection);
+  QGuiApplication app(argc, argv);
 
-    engine.addImportPath(QCoreApplication::applicationDirPath() + "/qml");
-    engine.addImportPath(":/");
+  QQmlApplicationEngine engine;
 
-    engine.load(url);
+  qmlRegisterType<LoginData>("Backend", 1, 0, "LoginData");
 
-    if (engine.rootObjects().isEmpty()) {
-        return -1;
-    }
+  const QUrl url(u"qrc:/qt/qml/Main/main.qml"_qs);
+  QObject::connect(
+      &engine, &QQmlApplicationEngine::objectCreated, &app,
+      [url](QObject *obj, const QUrl &objUrl) {
+        if (!obj && url == objUrl)
+          QCoreApplication::exit(-1);
+      },
+      Qt::QueuedConnection);
 
-    return app.exec();
+  engine.addImportPath(QCoreApplication::applicationDirPath() + "/qml");
+  engine.addImportPath(":/");
+
+  engine.load(url);
+
+  if (engine.rootObjects().isEmpty()) {
+    return -1;
+  }
+
+  return app.exec();
 }
