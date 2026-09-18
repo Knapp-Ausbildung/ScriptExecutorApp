@@ -44,10 +44,10 @@ void LoginService::login(const QString &ipAdress, const QString &username,
     ssh_error_exit(m_session, "CONNECTION ERROR");
   }
 
-  if (ssh_session_is_known_server(m_session) != SSH_KNOWN_HOSTS_OK) {
-    std::cerr << "Wrning: Host-Key not known oder changed!\n";
-    return;
-  }
+  //   if (ssh_session_is_known_server(m_session) != SSH_KNOWN_HOSTS_OK) {
+  //     std::cerr << "Wrning: Host-Key not known oder changed!\n";
+  //     return;
+  //   }
 
   if (ssh_userauth_password(m_session, nullptr,
                             password.toStdString().c_str()) !=
