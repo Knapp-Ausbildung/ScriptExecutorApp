@@ -17,9 +17,13 @@ qt_add_executable(ScriptExecutorApp
 
 src/main.cpp
 
-src/LoginData/LoginData.cpp
+src/App/AppController.cpp
 
-src/LoginData/LoginData.hpp
+src/App/AppController.hpp
+
+src/LoginService/LoginService.hpp
+
+src/LoginService/LoginService.cpp
 
 )
 

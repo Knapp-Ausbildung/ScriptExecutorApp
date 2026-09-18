@@ -8,7 +8,6 @@ qt6_add_qml_module(content
     RESOURCE_PREFIX "/qt/qml"
     QML_FILES
         App.qml
-        LoginScreen.qml
     RESOURCES
         fonts/fonts.txt
 )

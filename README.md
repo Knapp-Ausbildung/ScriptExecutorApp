@@ -33,17 +33,13 @@ Required Qt modules:
 ### Ubuntu/Debian
 
 ```bash
-sudo apt update
+cd scripts/
 
-sudo apt install \
-    cmake \
-    build-essential \
-    ninja-build \
-    qt6-base-dev \
-    qt6-base-dev-tools \
-    qt6-declarative-dev \
-    libxkbcommon-dev
+chmod +x dependencyInstaller.sh
+
+./dependencyInstaller.sh
 ```
+(in case of any missing dependencies in the script please update it)
 
 ## Contact
 
