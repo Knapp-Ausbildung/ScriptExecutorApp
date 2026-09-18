@@ -52,7 +52,7 @@ signals:
   void currentScreenChanged();
 
   void loggedInChanged();
-  void logInFailed();
+  void loginFailed();
 
 private:
   LoginService *m_loginService;

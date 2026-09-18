@@ -3,8 +3,8 @@ import QtQuick.Controls 2.15
 
 ApplicationWindow {
     visible: true
-    width: 600
-    height: 400
+    width: 1200
+    height: 800
 
     // Beispiel: Wenn eingeloggt -> Dashboard anzeigen
     // Wenn nicht eingeloggt -> Login-Formular anzeigen
@@ -93,7 +93,31 @@ ApplicationWindow {
         }
     }
 
-    // Optional: Wenn sich der Screen ändert, kannst du auch hier reagieren
+    Popup {
+        id: loginFailedPopup
+
+        anchors.centerIn: parent
+
+        width: 300
+        height: 120
+
+        modal: true
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 10
+
+            Text {
+                text: "Login Failed!"
+            }
+
+            Button {
+                text: "OK"
+                onClicked: loginFailedPopup.close()
+            }
+        }
+    }
+
     Connections {
         target: appController
         function onLoggedInChanged() {
@@ -104,5 +128,11 @@ ApplicationWindow {
                 stack.replace(loginPage)
             }
         }
+
+        function onLoginFailed() {
+            loginFailedPopup.open()
+        }
     }
+
+    
 }

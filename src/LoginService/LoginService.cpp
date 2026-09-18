@@ -42,6 +42,7 @@ void LoginService::login(const QString &ipAdress, const QString &username,
 
   if (ssh_connect(m_session) != SSH_OK) {
     ssh_error_exit(m_session, "CONNECTION ERROR");
+    return;
   }
 
   //   if (ssh_session_is_known_server(m_session) != SSH_KNOWN_HOSTS_OK) {

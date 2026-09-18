@@ -24,7 +24,7 @@ void AppController::attemptLogin(const QString &ipAdress,
     openDashboard();
   } else {
     openLogin();
-    emit logInFailed();
+    emit loginFailed();
   }
 }
 
