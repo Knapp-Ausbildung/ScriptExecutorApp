@@ -36,7 +36,8 @@ public:
 
 public slots: // public slots sind für QML aufrufbar.
 
-  void attemptLogin(const QString &ipAdress, const QString &password);
+  void attemptLogin(const QString &ipAdress, const QString &userName,
+                    const QString &password);
   void attemptLogout();
 
   // Wechsel auf Login
@@ -51,6 +52,7 @@ signals:
   void currentScreenChanged();
 
   void loggedInChanged();
+  void logInFailed();
 
 private:
   LoginService *m_loginService;

@@ -9,6 +9,10 @@ set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.2 REQUIRED COMPONENTS Core Gui Qml Quick)
 
+# SSH Connection Packages:
+find_package(LibSSH REQUIRED)
+pkg_check_modules(LIBSSH REQUIRED libssh)
+
 if (Qt6_VERSION VERSION_GREATER_EQUAL 6.3)
     qt_standard_project_setup()
 endif()
@@ -38,6 +42,15 @@ target_link_libraries(ScriptExecutorApp PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
+)
+
+# LIB SSH
+target_include_directories(ScriptExecutorApp PRIVATE
+    ${LIBSSH_INCLUDE_DIRS}
+)
+
+target_link_libraries(ScriptExecutorApp PRIVATE
+    ${LIBSSH_LIBRARIES}
 )
 
 set(QT_QML_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/qml)

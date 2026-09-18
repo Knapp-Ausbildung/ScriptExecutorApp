@@ -2,6 +2,7 @@
 #include "src/LoginService/LoginService.hpp"
 
 #include <QDebug>
+#include <qglobal.h>
 
 AppController::AppController(QObject *parent) : QObject(parent) {
   m_loginService = new LoginService();
@@ -12,16 +13,19 @@ bool AppController::isLoggedIn() const { return m_loginService->getLoggedIn(); }
 QString AppController::getCurrentScreen() const { return m_currentScreen; }
 
 void AppController::attemptLogin(const QString &ipAdress,
+                                 const QString &username,
                                  const QString &password) {
 
-  m_loginService->login(ipAdress, password);
+  m_loginService->login(ipAdress, username, password);
 
   emit loggedInChanged();
 
   if (isLoggedIn()) {
     openDashboard();
-  } else
+  } else {
     openLogin();
+    emit logInFailed();
+  }
 }
 
 void AppController::attemptLogout() {

@@ -38,11 +38,17 @@ ApplicationWindow {
                 }
 
                 TextField {
+                    id: userNameField
+                    placeholderText: "Username"
+                    width: 220
+                }
+                TextField {
                     id: passwordField
                     placeholderText: "Passwort"
                     echoMode: TextInput.Password
                     width: 220
                 }
+
 
                 Button {
                     text: "Einloggen"
@@ -50,7 +56,7 @@ ApplicationWindow {
 
                     onClicked: {
                         // Aufruf der C++-Methode
-                        appController.attemptLogin(ipAddressField.text, passwordField.text)
+                        appController.attemptLogin(ipAddressField.text, userNameField.text, passwordField.text)
                     }
                 }
             }
