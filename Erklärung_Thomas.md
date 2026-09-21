@@ -67,7 +67,6 @@ Diese Aufteilung ist wichtig:
 - `main.qml` / `App.qml` ist die sichtbare UI
 - `AppController` verwaltet den Lauf der App
 - `LoginService` verwaltet die Verbindung
-- `LoginData` ist eher ein reines Datenmodell
 
 ---
 
@@ -168,7 +167,9 @@ Das bedeutet:
 - QML kann `appController.currentScreen` lesen
 - wenn sich der Wert ändert, werden Signale ausgelöst
 
-Das ist wichtig für die UI, weil dann die Oberfläche automatically aktualisiert werden kann.
+Das ist wichtig für die UI, weil dann die Oberfläche automatisch aktualisiert werden kann.
+
+Seit der letzten Umsetzung ist außerdem der Signalname `loginFailed` im Controller konsistent auf `loginFailed` gesetzt worden, statt der älteren Schreibweise `logInFailed`.
 
 ---
 
@@ -193,8 +194,11 @@ Dann macht sie Folgendes:
 3. prüfen, ob Login erfolgreich war
 4. falls ja: Screen auf Dashboard setzen
 5. falls nein: auf Login zurücksetzen
+6. zusätzlich `loginFailed` emitten, falls der Login fehlschlägt
 
 Das ist der eigentliche Ablauf der App.
+
+Seit der letzten Änderung ist das Signal klar benannt als `loginFailed`, und der Controller schmeißt dieses Signal auch wirklich im Fehlerfall.
 
 #### `attemptLogout()`
 
@@ -245,7 +249,7 @@ Der Ablauf ist derzeit:
 1. Eine neue SSH-Session wird erstellt
 2. Host, Benutzer und Port werden gesetzt
 3. `ssh_connect(...)` versucht die Verbindung
-4. Host-Key wird überprüft
+4. Host-Key wird derzeit in der aktuellen Version nicht aktiv überprüft, weil der Block dafür vorübergehend auskommentiert ist
 5. Passwort-Authentifizierung wird versucht
 6. wenn erfolgreich: `m_loggedIn = true`
 
@@ -260,35 +264,15 @@ ssh_options_set(m_session, SSH_OPTIONS_PORT, &port);
 
 Danach versucht die Anwendung, den Server wirklich zu kontaktieren.
 
+Wichtig: Der Host-Key-Check ist aktuell auskommentiert, also mit `ssh_session_is_known_server(...)` wird in der Laufzeit noch kein strenger Sicherheits-Validierungsschritt durchgeführt. Das ist für die aktuelle Entwicklungsphase praktisch, sollte aber später wieder aktiviert werden, sobald das Login-Verhalten stabil und sicher genug ist.
+
 Wenn die Verbindung fehlschlägt, gibt `ssh_error_exit(...)` den Fehler aus und setzt `m_loggedIn = false`.
 
 Das ist gut und wichtig, weil man auf diese Weise die Verbindung sauber verhandeln kann.
 
 ---
 
-### 3.7 src/LoginData/LoginData.hpp und LoginData.cpp
-
-Diese Dateien sind ein einfacher Datencontainer für Login-Daten.
-
-Sie enthalten z. B.:
-
-- IP-Adresse
-- Passwort
-- andere Login-Informationen
-
-Methode:
-
-```cpp
-void saveCredentials(const QString &ipadress, const QString &password);
-```
-
-Diese Klasse ist nicht der eigentliche Server-Logikteil, sondern eher ein Objekt, das Login-Werte zwischen speichern und weiterverarbeiten kann.
-
-Das ist sauber, aber momentan eher als Basis für spätere Erweiterung gedacht.
-
----
-
-### 3.8 content/App.qml
+### 3.7 content/App.qml
 
 Das ist die Haupt-UI-Datei.
 

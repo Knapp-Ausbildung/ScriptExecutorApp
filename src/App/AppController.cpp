@@ -10,6 +10,8 @@ AppController::AppController(QObject *parent) : QObject(parent) {
 
 // Getter
 bool AppController::isLoggedIn() const { return m_loginService->getLoggedIn(); }
+
+
 QString AppController::getCurrentScreen() const { return m_currentScreen; }
 
 void AppController::attemptLogin(const QString &ipAdress,
