@@ -14,6 +14,44 @@ The goal of this application is to provide customers with an intuitive user inte
 - Built with Qt Quick (QML) and C++
 - Cross-platform architecture
 
+## Design Language
+
+- Member Variables
+  Make sure to mark them with "m_name".
+  This makes it easier to be distinguished from local variables.
+  Example:
+  ```cpp
+  class Player
+  {
+  private:
+  string m_name;
+  int m_score;
+  };
+  ```
+  
+- Memory Management
+  In general, try to prefer stack allocation.
+  It is up to the developer if he wants to use references or pointers, but it is recommended to use Smart Pointers to prevent memory leaks.
+  Also make sure to use "ptr" in the name of pointers.
+  Example:
+  ```cpp
+  int *ptr = new int(10);
+  std::unique_ptr<Player> ptrPlayer = std::make_unique<Player>("Name", "100");
+  ```
+
+- Naming conventions
+  Classes and Structs use PascalCase: z.B. LoginService 
+  Method Names and local variables use camelCase: z.B. currentValue, sshKey
+  Constants are all caps: z.B. SSH_PORT
+
+- Use const when appropriate
+  Mark parameters or the return values of methods as constants to make it obvious they are not meant to be modified in any way.
+  Example:
+    ```cpp
+  void printSession(const Session& session):
+  std::string& getSesssionName() const;
+  ```
+
 ## Dependencies
 
 ### Build Dependencies
