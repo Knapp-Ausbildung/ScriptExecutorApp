@@ -109,7 +109,6 @@ void SshWorker::login(const QString &host,
   m_pendingPassword = password;
   authenticatePendingLogin();     
 }
-
 // Zum Debuggen um aktuellen Fingerpint zu deleten: ssh-keygen -R [ip]
 
 void SshWorker::confirmHostKey() {
@@ -235,7 +234,6 @@ void SshWorker::executeCommand(const QString &command) {
         emit commandFailed(error);
         return;
     }
-
     
     if (ssh_channel_request_exec(channel, commandBytes.constData()) != SSH_OK) {
         const QString error = QString ("Could not start command: %1")
@@ -332,6 +330,6 @@ void SshWorker::executePresetCommand(const QString &commandId)
         emit commandFailed("Unkown predefined command");
         return;
     }
-    
+
     executeCommand(command);
 }

@@ -82,7 +82,7 @@ void AppController::openDashboard() {
 void AppController::executeCommand(const QString &command) {
   m_loginService->executeCommand(command);
 }
-
+// Für Preset-Buttons zum Ausführen von Befehlen
 void AppController::executePresetCommand(const QString &commandId) {
   m_loginService->executePresetCommand(commandId);
 }

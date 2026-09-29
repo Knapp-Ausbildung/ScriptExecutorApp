@@ -47,11 +47,9 @@ public slots: // public slots sind für QML aufrufbar.
   void openDashboard();
 
   void confirmHostKey();
-
   void rejectHostKey();
 
   void executeCommand(const QString &command);
-
   void executePresetCommand(const QString &commandId);
 
 signals:

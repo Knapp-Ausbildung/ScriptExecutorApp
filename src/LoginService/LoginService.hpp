@@ -25,7 +25,6 @@ signals:
                                   const QString &fingerprint);
   void loginFinished(bool success);
   void loggedOut();
-
   void loginRequested(const QString &host, const QString &username,
                          const QString &password, int port);
   
@@ -50,6 +49,7 @@ public slots:
   void logout();
   void executeCommand(const QString &message);
   void executePresetCommand(const QString &commandId);
+
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;

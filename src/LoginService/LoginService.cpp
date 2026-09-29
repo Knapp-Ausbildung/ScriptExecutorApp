@@ -57,7 +57,6 @@ LoginService::LoginService(QObject *parent)
   connect(m_worker, &SshWorker::commandFailed,
           this, &LoginService::commandFailed);
 
-
   m_thread->start();
 }
 
@@ -67,7 +66,6 @@ bool LoginService::getLoggedIn() const {
 
 void LoginService::login(const QString &host, const QString &username,
                          const QString &password, int port) {
-
   // Placeholder: free login
   //     if (!m_loggedIn) {
   //     m_loggedIn = false;
