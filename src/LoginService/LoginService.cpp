@@ -36,6 +36,8 @@ LoginService::LoginService(QObject *parent)
           m_worker, &SshWorker::logout, Qt::QueuedConnection); 
   connect(this, &LoginService::executeCommandRequested,
           m_worker, &SshWorker::executeCommand, Qt::QueuedConnection);
+  connect(this, &LoginService::executePresetCommandRequested,
+          m_worker, &SshWorker::executePresetCommand, Qt::QueuedConnection);
 
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
   connect(m_worker, &SshWorker::hostKeyConfirmationRequested,
@@ -92,4 +94,8 @@ void LoginService::executeCommand(const QString &command) {
 LoginService::~LoginService() {
   m_thread->quit();
   m_thread->wait();
+}
+
+void LoginService::executePresetCommand(const QString &commandId) {
+  emit executePresetCommandRequested(commandId);
 }

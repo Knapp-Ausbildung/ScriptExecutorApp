@@ -22,6 +22,7 @@ public slots:
     void logout();
 
     void executeCommand(const QString &command);
+    void executePresetCommand(const QString &commandId);
 
 signals:
     void hostKeyConfirmationRequested(const QString &host,

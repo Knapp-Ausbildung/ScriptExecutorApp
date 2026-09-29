@@ -315,3 +315,23 @@ void SshWorker::executeCommand(const QString &command) {
                           QString::fromUtf8(stderrData),
                           exitStatus);
 }
+
+void SshWorker::executePresetCommand(const QString &commandId)
+{
+    QString command;
+
+    if (commandId == "hostname") {
+        command = "hostname";
+    } else if (commandId == "whoami") {
+        command = "whoami";
+    } else if (commandId == "uptime") {
+        command = "uptime";
+    } else if (commandId == "disk-usage") {
+        command = "df -h";
+    } else {
+        emit commandFailed("Unkown predefined command");
+        return;
+    }
+    
+    executeCommand(command);
+}

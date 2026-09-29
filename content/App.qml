@@ -86,6 +86,15 @@ ApplicationWindow {
                     appController.executeCommand(command)
             }
 
+            function runPreset(commandId, displayCommand) {
+                if (commandRunning)
+                return
+
+                commandRunning = true
+                commandError.text = ""
+                commandOutput.text += "$ " + displayCommand + "\n"
+                appController.executePresetCommand(commandId)
+            }
             Column {
                 anchors.centerIn: parent
                 spacing: 20
@@ -106,12 +115,32 @@ ApplicationWindow {
 
                     onAccepted: dashboardRoot.submitCommand()
                 }
-
                 Button {
                     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
                     enabled: !dashboardRoot.commandRunning
                     onClicked: dashboardRoot.submitCommand()
                 }
+                Row {
+                    spacing: 10
+                Button {
+                    text: "Benutzer"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("whoami", "whoami")
+                }
+
+                Button {
+                    text: "Systemlaufzeit"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("uptime", "uptime")
+                }
+
+                Button {
+                    text: "Datenträger"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("disk-usage", "df -h")
+                }
+            }
+
 
                 Text {
                     id: commandError

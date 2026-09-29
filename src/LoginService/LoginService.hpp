@@ -38,6 +38,7 @@ signals:
                         const QString &standardError,
                         int exitStatus);
   void commandFailed(const QString &message);
+  void executePresetCommandRequested(const QString &commandId);
 
 public slots:
   void login(const QString &host, 
@@ -48,7 +49,7 @@ public slots:
   void rejectedHostKey();
   void logout();
   void executeCommand(const QString &message);
-
+  void executePresetCommand(const QString &commandId);
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;
