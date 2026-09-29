@@ -50,6 +50,8 @@ public slots: // public slots sind für QML aufrufbar.
 
   void rejectHostKey();
 
+  void executeCommand(const QString &command);
+
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
@@ -61,6 +63,12 @@ signals:
   void hostKeyConfirmationRequested(const QString &host, 
                                     int port,
                                     const QString &fingerprint);
+  
+  void commandCompleted(const QString &standardOutput,
+                        const QString &standardError,
+                        int exitStatus);
+  void commandFailed(const QString &message);
+  
 private:
   LoginService *m_loginService;
 

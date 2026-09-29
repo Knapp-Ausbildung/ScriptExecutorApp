@@ -34,7 +34,9 @@ LoginService::LoginService(QObject *parent)
           m_worker, &SshWorker::rejectHostKey, Qt::QueuedConnection);  
   connect(this, &LoginService::logoutRequested,
           m_worker, &SshWorker::logout, Qt::QueuedConnection); 
-  
+  connect(this, &LoginService::executeCommandRequested,
+          m_worker, &SshWorker::executeCommand, Qt::QueuedConnection);
+
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
   connect(m_worker, &SshWorker::hostKeyConfirmationRequested,
           this, &LoginService::hostKeyConfirmationRequested);  
@@ -48,6 +50,11 @@ LoginService::LoginService(QObject *parent)
           m_loggedIn = false;
     emit loggedOut();
   });
+  connect(m_worker, &SshWorker::commandCompleted,
+          this, &LoginService::commandCompleted);  
+  connect(m_worker, &SshWorker::commandFailed,
+          this, &LoginService::commandFailed);
+
 
   m_thread->start();
 }
@@ -79,6 +86,9 @@ void LoginService::logout() {
   emit logoutRequested();
 }
 
+void LoginService::executeCommand(const QString &command) {
+  emit executeCommandRequested(command);
+}
 LoginService::~LoginService() {
   m_thread->quit();
   m_thread->wait();

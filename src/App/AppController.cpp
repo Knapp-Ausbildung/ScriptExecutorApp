@@ -34,7 +34,13 @@ AppController::AppController(QObject *parent)
     emit loggedInChanged();
     openLogin();
   });
-}
+
+  connect(m_loginService, &LoginService::commandCompleted,
+          this, &AppController::commandCompleted);
+          
+  connect(m_loginService, &LoginService::commandFailed, 
+          this, &AppController::commandFailed);
+  }
 
 // Getter
 bool AppController::isLoggedIn() const { return m_loginService->getLoggedIn(); }
@@ -71,4 +77,8 @@ void AppController::openDashboard() {
     m_currentScreen = "dashboard";
     emit currentScreenChanged();
   }
+}
+
+void AppController::executeCommand(const QString &command) {
+  m_loginService->executeCommand(command);
 }

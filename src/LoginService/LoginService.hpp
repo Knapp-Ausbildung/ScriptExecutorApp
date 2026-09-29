@@ -33,6 +33,12 @@ signals:
   void rejectHostKeyRequested();
   void logoutRequested();
 
+  void executeCommandRequested(const QString &command);
+  void commandCompleted(const QString &standardOutput,
+                        const QString &standardError,
+                        int exitStatus);
+  void commandFailed(const QString &message);
+
 public slots:
   void login(const QString &host, 
              const QString &username,
@@ -41,6 +47,7 @@ public slots:
   void confirmHostKey();
   void rejectedHostKey();
   void logout();
+  void executeCommand(const QString &message);
 
 private:
   QThread *m_thread = nullptr;

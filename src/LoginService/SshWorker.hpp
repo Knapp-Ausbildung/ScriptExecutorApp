@@ -20,13 +20,19 @@ public slots:
     void confirmHostKey();
     void rejectHostKey();
     void logout();
-    
+
+    void executeCommand(const QString &command);
+
 signals:
     void hostKeyConfirmationRequested(const QString &host,
                                       int port,                              
                                       const QString &fingerprint);
     void loginFinished(bool success);
     void loggedOut();
+    void commandCompleted(const QString &standardOutput,
+                          const QString &standardError,
+                          int exitStatus);
+    void commandFailed(const QString &message);
 
 private:
     bool authenticatePendingLogin();
