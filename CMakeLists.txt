@@ -28,6 +28,8 @@ src/App/AppController.hpp
 src/LoginService/LoginService.hpp
 
 src/LoginService/LoginService.cpp
+src/LoginService/SshWorker.hpp
+src/LoginService/SshWorker.cpp
 
 )
 

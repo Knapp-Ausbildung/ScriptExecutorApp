@@ -8,36 +8,42 @@
 #include <qtmetamacros.h>
 #include <qstring.h>
 
+class QThread;
+class SshWorker;
+
 class LoginService : public QObject {
   Q_OBJECT
 
-private:
-  bool m_loggedIn = false; // Gerade logged in?
-  ssh_session m_session = nullptr;
-
-  bool authenticatePendingLogin();
-  void failLogin(const QString &messsage);
-  void cleanup();
-
-  QString m_pendingPassword;
-  bool m_connected = false;
-  bool m_waitingForHostKeyConfirmation = false;
-
 public:
   explicit LoginService(QObject *parent = nullptr);
+  ~LoginService() override;
 
-  const bool getLoggedIn();
+  bool getLoggedIn() const;
 
 signals:
   void hostKeyConfirmationRequested(const QString &host, int port, 
                                   const QString &fingerprint);
   void loginFinished(bool success);
+  void loggedOut();
+
+  void loginRequested(const QString &host, const QString &username,
+                         const QString &password, int port);
+  
+  void confirmHostKeyRequested();
+  void rejectHostKeyRequested();
+  void logoutRequested();
 
 public slots:
-  void login(const QString &ipAdress, 
+  void login(const QString &host, 
              const QString &username,
-             const QString &password, int port = 22);
+             const QString &password, 
+             int port = 22);
   void confirmHostKey();
   void rejectedHostKey();
   void logout();
+
+private:
+  QThread *m_thread = nullptr;
+  SshWorker *m_worker = nullptr;
+  bool m_loggedIn = false; // Gerade logged in?
 };

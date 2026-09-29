@@ -4,11 +4,19 @@
 #include <QDebug>
 #include <qglobal.h>
 
-AppController::AppController(QObject *parent) : QObject(parent), m_loginService(new LoginService(this)) {
-  connect(m_loginService, &LoginService::hostKeyConfirmationRequested, this, &AppController::hostKeyConfirmationRequested);
+AppController::AppController(QObject *parent) 
+  : QObject(parent), 
+  m_loginService(new LoginService(this)) {
+  connect(m_loginService, 
+          &LoginService::hostKeyConfirmationRequested, 
+          this, 
+          &AppController::hostKeyConfirmationRequested);
 
   // Verbinden des AppControllers mit dem LoginService und auf entsprechende Seite wechseln
-  connect(m_loginService, &LoginService::loginFinished, this, [this](bool success) {
+  connect(m_loginService, 
+          &LoginService::loginFinished, 
+          this, 
+          [this](bool success) {
     emit loggedInChanged();
 
     if(success) {
@@ -17,6 +25,14 @@ AppController::AppController(QObject *parent) : QObject(parent), m_loginService(
       openLogin();
       emit loginFailed();
     }
+  });
+
+  connect(m_loginService, 
+          &LoginService::loggedOut, 
+          this, 
+          [this] {
+    emit loggedInChanged();
+    openLogin();
   });
 }
 
@@ -40,13 +56,6 @@ void AppController::rejectHostKey(){
 
 void AppController::attemptLogout() {
   m_loginService->logout();
-
-  emit loggedInChanged();
-
-  if (isLoggedIn()) {
-    openDashboard();
-  } else
-    openLogin();
 }
 
 void AppController::openLogin() {
