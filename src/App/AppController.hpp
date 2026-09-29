@@ -46,6 +46,10 @@ public slots: // public slots sind für QML aufrufbar.
   // Wechsel auf Dashboard
   void openDashboard();
 
+  void confirmHostKey();
+
+  void rejectHostKey();
+
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
@@ -54,6 +58,9 @@ signals:
   void loggedInChanged();
   void loginFailed();
 
+  void hostKeyConfirmationRequested(const QString &host, 
+                                    int port,
+                                    const QString &fingerprint);
 private:
   LoginService *m_loginService;
 

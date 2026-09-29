@@ -134,5 +134,33 @@ ApplicationWindow {
         }
     }
 
-    
+    Dialog {
+        id: hostKeyDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: qsTr("SSH-Host-Key bestätigen")
+        standardButtons: Dialog.Yes | Dialog.No
+
+        property string fingerprint: ""
+
+        contentItem: Text {
+            text: qsTr("Prüfe den Fingerprint über einen vertrauenswürdigen Weg:\n\n%1")
+                       .arg(hostKeyDialog.fingerprint)
+            wrapMode: Text.Wrap
+        }
+
+        onAccepted: appController.confirmHostKey()
+        onRejected: appController.rejectHostKey()
+    }
+
+    Connections {
+        target: appController
+
+        function onHostKeyConfirmationRequested(host, port, fingerprint) {
+            hostKeyDialog.title = 
+                qsTr("Host-Key für %1:%2 bestätigen").arg(host).arg(port)
+            hostKeyDialog.fingerprint = fingerprint
+            hostKeyDialog.open()
+        }
+    }
 }
