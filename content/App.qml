@@ -162,9 +162,15 @@ ApplicationWindow {
                 ScrollView {
                     id: commandOutputScroll
                     width: 600
-                    height: 240
+                    height: 300
                     clip: true
-                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        anchors.topMargin: 10
+                    }
                 
 
                 TextArea {
@@ -172,6 +178,11 @@ ApplicationWindow {
                     width: commandOutputScroll.availableWidth
                     readOnly: true
                     wrapMode: TextArea.Wrap
+
+                    onTextChanged: Qt.callLater(function() {
+                        const bar = commandOutputScroll.ScrollBar.vertical
+                        bar.position = Math.max(0, 1 - bar.size)
+                        })
                     }
                 }
 
