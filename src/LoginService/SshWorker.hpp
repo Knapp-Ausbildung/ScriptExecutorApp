@@ -2,6 +2,8 @@
 
 #include <QObject>
 #include <QString>
+#include <QTimer>
+
 #include <atomic>
 #include <libssh/libssh.h>
 
@@ -43,6 +45,10 @@ private:
     bool authenticatePendingLogin();
     void failLogin(const QString &message);
     void cleanup();
+    void checkConnection();
+
+    QTimer *m_keepAliveTimer = nullptr;
+    int m_keepAliveFailures = 0;
 
     ssh_session m_session = nullptr;
     QString m_pendingPassword;

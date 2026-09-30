@@ -48,7 +48,13 @@ bool getServerFingerprint(ssh_session session, QString &fingerprint) {
   }
 }
 
-SshWorker::SshWorker(QObject *parent) : QObject(parent) {}
+SshWorker::SshWorker(QObject *parent) : QObject(parent) {
+  m_keepAliveTimer = new QTimer(this);
+  m_keepAliveTimer->setInterval(30'000);
+
+  connect(m_keepAliveTimer, &QTimer::timeout,
+          this, &SshWorker::checkConnection);
+}
 
 SshWorker::~SshWorker() { 
     cleanup();
@@ -161,6 +167,8 @@ bool SshWorker::authenticatePendingLogin() {
   }
 
   m_loggedIn = true;
+  m_keepAliveFailures = 0;
+  m_keepAliveTimer->start();
   qDebug() << "SSH connection successfully established";
   emit loginFinished(true);
   return true;
@@ -177,7 +185,73 @@ void SshWorker::failLogin(const QString &message) {
   emit loginFinished(false);
 }
 
+void SshWorker::checkConnection() {
+  if(m_session == nullptr || !m_connected || !m_loggedIn) {
+    return;
+  }
+
+  ssh_channel channel = ssh_channel_new(m_session);
+  bool probeSucceeded = false;
+
+  if (channel != nullptr && 
+      ssh_channel_open_session(channel) == SSH_OK &&
+      ssh_channel_request_exec(channel, "/usr/bin/true") == SSH_OK) {
+      QElapsedTimer timeout;
+      timeout.start();
+
+      char buffer[256];
+      bool readFailed = false;
+
+      while (!ssh_channel_is_eof(channel) && timeout.elapsed()  < 5000) {
+        const int stdoutCount = 
+          ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 0);
+        
+        const int stderrCount = 
+          ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 1);
+        
+        if (stdoutCount == SSH_ERROR || stderrCount == SSH_ERROR) {
+          readFailed = true;
+          break;
+        }
+
+        if (stdoutCount == 0 && stderrCount == 0) {
+          QThread::msleep(10);
+        }
+      }
+
+        probeSucceeded = 
+                        !readFailed && 
+                        ssh_channel_is_eof(channel) &&
+                        ssh_channel_get_exit_status(channel) == 0;
+    }
+
+    if (channel != nullptr) {
+      if (ssh_channel_is_open(channel)) {
+        ssh_channel_close(channel);
+      }
+      ssh_channel_free(channel);
+    }
+
+    if(probeSucceeded) {
+      m_keepAliveFailures = 0;
+      return;
+    }
+
+    qWarning() << "SSH keepalive check failed";
+    ++m_keepAliveFailures;
+
+    if(m_keepAliveFailures >= 2) {
+      cleanup();
+      emit loggedOut();
+    }
+}
 void SshWorker::cleanup() {
+  if (m_keepAliveTimer != nullptr) {
+    m_keepAliveTimer->stop();
+  }
+
+  m_keepAliveFailures = 0;
+
   m_pendingPassword.clear();
   m_waitingForHostKeyConfirmation = false;
 
