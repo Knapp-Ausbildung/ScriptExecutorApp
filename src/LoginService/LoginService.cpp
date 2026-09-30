@@ -34,6 +34,10 @@ LoginService::LoginService(QObject *parent)
           m_worker, &SshWorker::rejectHostKey, Qt::QueuedConnection);  
   connect(this, &LoginService::logoutRequested,
           m_worker, &SshWorker::logout, Qt::QueuedConnection); 
+  connect(this, &LoginService::prepareCommandRequested,
+          m_worker, &SshWorker::prepareCommand, Qt::DirectConnection);
+  connect(this, &LoginService::cancelCommandRequested,
+          m_worker, &SshWorker::cancelCommand, Qt::DirectConnection);
   connect(this, &LoginService::executeCommandRequested,
           m_worker, &SshWorker::executeCommand, Qt::QueuedConnection);
   connect(this, &LoginService::executePresetCommandRequested,
@@ -54,6 +58,8 @@ LoginService::LoginService(QObject *parent)
   });
   connect(m_worker, &SshWorker::commandCompleted,
           this, &LoginService::commandCompleted);  
+  connect(m_worker, &SshWorker::commandCancelled,
+          this, &LoginService::commandCancelled);
   connect(m_worker, &SshWorker::commandFailed,
           this, &LoginService::commandFailed);
 
@@ -86,7 +92,12 @@ void LoginService::logout() {
   emit logoutRequested();
 }
 
+void LoginService::cancelCommand() {
+  emit cancelCommandRequested();
+}
+
 void LoginService::executeCommand(const QString &command) {
+  emit prepareCommandRequested();
   emit executeCommandRequested(command);
 }
 LoginService::~LoginService() {
@@ -95,5 +106,6 @@ LoginService::~LoginService() {
 }
 
 void LoginService::executePresetCommand(const QString &commandId) {
+  emit prepareCommandRequested();
   emit executePresetCommandRequested(commandId);
 }

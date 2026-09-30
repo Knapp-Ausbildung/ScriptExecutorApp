@@ -31,11 +31,14 @@ signals:
   void confirmHostKeyRequested();
   void rejectHostKeyRequested();
   void logoutRequested();
+  void prepareCommandRequested();
+  void cancelCommandRequested();
 
   void executeCommandRequested(const QString &command);
   void commandCompleted(const QString &standardOutput,
                         const QString &standardError,
                         int exitStatus);
+  void commandCancelled();
   void commandFailed(const QString &message);
   void executePresetCommandRequested(const QString &commandId);
 
@@ -47,6 +50,7 @@ public slots:
   void confirmHostKey();
   void rejectedHostKey();
   void logout();
+  void cancelCommand();
   void executeCommand(const QString &message);
   void executePresetCommand(const QString &commandId);
 

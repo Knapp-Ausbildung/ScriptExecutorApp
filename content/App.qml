@@ -115,11 +115,21 @@ ApplicationWindow {
 
                     onAccepted: dashboardRoot.submitCommand()
                 }
-                Button {
+                Row {
+                    spacing: 10
+
+                    Button {
                     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
                     enabled: !dashboardRoot.commandRunning
                     onClicked: dashboardRoot.submitCommand()
                 }
+                Button {
+                    text:"Befehl abbrechen"
+                    visible: dashboardRoot.commandRunning
+                    onClicked: appController.cancelCommand()
+                    }
+                  }
+                
                 Row {
                     spacing: 10
                 Button {
@@ -195,6 +205,12 @@ ApplicationWindow {
                     dashboardRoot.commandRunning = false
                     commandError.text = message
                     commandOutput.text += "\n[Fehler] " + message + "\n"
+                }
+
+                function onCommandCancelled() {
+                    dashboardRoot.commandRunning = false
+                    commandError.text = ""
+                    commandOutput.text += "\n[Befehl abgebrochen]\n"
                 }
             }
         }

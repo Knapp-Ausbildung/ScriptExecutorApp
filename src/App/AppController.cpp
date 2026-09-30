@@ -40,6 +40,8 @@ AppController::AppController(QObject *parent)
           
   connect(m_loginService, &LoginService::commandFailed, 
           this, &AppController::commandFailed);
+  connect(m_loginService, &LoginService::commandCancelled,
+          this, &AppController::commandCancelled);
   }
 
 // Getter
@@ -85,4 +87,8 @@ void AppController::executeCommand(const QString &command) {
 // Für Preset-Buttons zum Ausführen von Befehlen
 void AppController::executePresetCommand(const QString &commandId) {
   m_loginService->executePresetCommand(commandId);
+}
+
+void AppController::cancelCommand() {
+  m_loginService->cancelCommand();
 }

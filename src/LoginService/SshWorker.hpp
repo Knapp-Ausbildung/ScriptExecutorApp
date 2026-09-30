@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <atomic>
 #include <libssh/libssh.h>
 
 class SshWorker : public QObject {
@@ -21,6 +22,8 @@ public slots:
     void rejectHostKey();
     void logout();
 
+    void prepareCommand();
+    void cancelCommand();
     void executeCommand(const QString &command);
     void executePresetCommand(const QString &commandId);
 
@@ -33,6 +36,7 @@ signals:
     void commandCompleted(const QString &standardOutput,
                           const QString &standardError,
                           int exitStatus);
+    void commandCancelled();
     void commandFailed(const QString &message);
 
 private:
@@ -45,4 +49,5 @@ private:
     bool m_loggedIn = false;
     bool m_connected = false;
     bool m_waitingForHostKeyConfirmation = false;
+    std::atomic_bool m_cancelRequested = false;
 };

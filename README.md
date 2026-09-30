@@ -10,9 +10,17 @@ The goal of this application is to provide customers with an intuitive user inte
 
 - Connect to KNAPP warehouse servers
 - Execute predefined testing scripts
+- Execute commands and aliases configured in the remote user's shell settings
 - Intuitive and user-friendly interface
 - Built with Qt Quick (QML) and C++
 - Cross-platform architecture
+
+Commands entered in the application run in an interactive, non-login Bash
+shell on the remote server. In addition to the user's `~/.bashrc`, the app
+loads `~/.common.alias` when present so aliases configured through the user's
+`~/.profile` are available. It does not execute the entire `~/.profile`, which
+may contain login-only commands. The entered command is evaluated after the
+alias file is loaded so aliases such as `lh` can expand.
 
 ## Design Language
 

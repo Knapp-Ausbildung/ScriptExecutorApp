@@ -9,6 +9,12 @@
 
 namespace {
 
+QString quoteShellArgument(const QString &argument) {
+    QString quoted = argument;
+    quoted.replace("'", "'\\''");
+    return "'" + quoted + "'";
+}
+
 bool getServerFingerprint(ssh_session session, QString &fingerprint) {
     ssh_key serverKey = nullptr;
 
@@ -193,6 +199,14 @@ void SshWorker::logout() {
   emit loggedOut();
 }
 
+void SshWorker::prepareCommand() {
+    m_cancelRequested.store(false, std::memory_order_release);
+}
+
+void SshWorker::cancelCommand() {
+    m_cancelRequested.store(true, std::memory_order_release);
+}
+
 void SshWorker::executeCommand(const QString &command) {
     
     // Überprüfung für eingeloggt und verbunden sein
@@ -208,7 +222,17 @@ void SshWorker::executeCommand(const QString &command) {
     }
 
     // Neuen libssh-Channel erstellen
-    const QByteArray commandBytes = command.toUtf8();
+    const QString shellCommand =
+        "exec 2>&3; "
+        "if [ -r \"$HOME/.common.alias\" ]; then "
+        ". \"$HOME/.common.alias\" || exit; "
+        "fi; "
+        "shopt -s expand_aliases; "
+        "eval " + quoteShellArgument(command);
+    const QByteArray commandBytes =
+        QString("bash -ic %1 3>&2 2>/dev/null")
+            .arg(quoteShellArgument(shellCommand))
+            .toUtf8();
     ssh_channel channel = ssh_channel_new(m_session);
 
     if(channel == nullptr) {
@@ -250,14 +274,52 @@ void SshWorker::executeCommand(const QString &command) {
     char buffer[4096];
 
     QString readError;
+    QString signalError;
+    QElapsedTimer cancellationTimer;
+    int cancellationStage = 0;
+    bool cancellationTimedOut = false;
 
     while  (true) {
+
+        if (m_cancelRequested.load(std::memory_order_acquire)) {
+            if (cancellationStage == 0) {
+                cancellationTimer.start();
+                cancellationStage = 1;
+                if (ssh_channel_request_send_signal(channel, "INT") != SSH_OK) {
+                    signalError = QString("Could not send interrupt signal: %1")
+                                      .arg(ssh_get_error(m_session));
+                }
+            } else if (cancellationTimer.elapsed() >= 1000 &&
+                       cancellationStage == 1) {
+                cancellationStage = 2;
+                if (ssh_channel_request_send_signal(channel, "TERM") != SSH_OK) {
+                    signalError = QString("Could not send terminate signal: %1")
+                                      .arg(ssh_get_error(m_session));
+                }
+            } else if (cancellationTimer.elapsed() >= 2000 &&
+                       cancellationStage == 2) {
+                cancellationStage = 3;
+                if (ssh_channel_request_send_signal(channel, "KILL") != SSH_OK) {
+                    signalError = QString("Could not send kill signal: %1")
+                                      .arg(ssh_get_error(m_session));
+                }
+            } else if (cancellationTimer.elapsed() >= 4000 &&
+                       cancellationStage == 3) {
+                cancellationTimedOut = true;
+                break;
+            }
+        }
 
         bool receivedData = false;
 
         const int stdoutCount = ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 0);
                                                             
         if(stdoutCount == SSH_ERROR) {
+            if (cancellationStage != 0) {
+                readError = QString("Error reading command output while cancelling: %1")
+                                .arg(ssh_get_error(m_session));
+                break;
+            }
             readError = QString ("Error reading command output: %1")        
                                 .arg(ssh_get_error(m_session));
         break;
@@ -276,6 +338,11 @@ void SshWorker::executeCommand(const QString &command) {
         const int stderrCount = ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 1);
 
         if(stderrCount == SSH_ERROR) {
+            if (cancellationStage != 0) {
+                readError = QString("Error reading command error output while cancelling: %1")
+                                .arg(ssh_get_error(m_session));
+                break;
+            }
             readError = QString("Error reading command error output: %1")
                                 .arg(ssh_get_error(m_session));
         break;
@@ -298,6 +365,23 @@ void SshWorker::executeCommand(const QString &command) {
         if(!receivedData) {
             QThread::msleep(10);
         }
+    }
+
+    if (cancellationStage != 0) {
+        closeChannel();
+        if (!readError.isEmpty()) {
+            emit commandFailed(readError);
+        } else if (cancellationTimedOut) {
+            QString message =
+                "The server did not stop the command after INT, TERM, and KILL";
+            if (!signalError.isEmpty()) {
+                message += QString(": %1").arg(signalError);
+            }
+            emit commandFailed(message);
+        } else {
+            emit commandCancelled();
+        }
+        return;
     }
 
     if(!readError.isEmpty()) {
