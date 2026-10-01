@@ -1,5 +1,6 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
 
 ApplicationWindow {
     visible: true
@@ -30,23 +31,27 @@ ApplicationWindow {
 
                 Text {
                     text: "Login"
+                    Accessible.name: "Login"
                     font.pixelSize: 24
                 }
 
                 TextField {
                     id: ipAddressField
                     placeholderText: "IP Adresse"
+                    Accessible.name: "IP Adresse"
                     width: 220
                 }
 
                 TextField {
                     id: userNameField
                     placeholderText: "Username"
+                    Accessible.name: "Username"
                     width: 220
                 }
                 TextField {
                     id: passwordField
                     placeholderText: "Passwort"
+                    Accessible.name: "Passwort"
                     echoMode: TextInput.Password
                     width: 220
                 }
@@ -54,6 +59,7 @@ ApplicationWindow {
 
                 Button {
                     text: "Einloggen"
+                    Accessible.name: "Einloggen"
                     width: 220
 
                     onClicked: {
@@ -72,7 +78,72 @@ ApplicationWindow {
             id: dashboardRoot
             color: "#e8f5e9"
 
-             property bool commandRunning: false
+            property bool commandRunning: false
+            
+            property string outputHtml: ""
+
+            function escapeHtml(text) {
+                return String(text)
+                            .replace(/&/g, "&amp;")
+                            .replace(/</g, "&lt;")
+                            .replace(/>/g, "&gt;")
+                            .replace(/\r/g, "")
+                            .replace(/\n/g, "<br/>")
+                            .replace(/ /g, "&nbsp;")
+            }
+
+            // Parser für Rückgabe des Terminals
+            function ansiToHtml(text) {
+                const colors = { 
+                    30: "#000000", 31: "#cc0000", 32: "#00aa00", 33: "#aa7700",
+                    34: "#0000cc", 35: "#aa00aa", 36: "#008888", 37: "#cccccc",
+                    90: "#555555", 91: "#ff5555", 92: "#55ff55", 93: "#ffff55",
+                    94: "#5555ff", 95: "#ff55ff", 96: "#55ffff", 97: "#ffffff"
+                }
+
+                function segmentToHtml(segment, color) {
+                    const escaped = escapeHtml(segment)
+                    return color
+                        ? "<span style=\"color:" + color + "\">" + escaped + "</span>"
+                        : escaped
+                }
+
+                const sgr = new RegExp("\\u001b\\[([0-9;]*)m", "g") 
+                      let result = ""
+                      let currentColor = ""
+                      let lastIndex = 0
+                      let match
+                while ((match = sgr.exec(String(text))) !== null) {
+                    result += segmentToHtml(text.slice(lastIndex, match.index), currentColor)
+
+                    const codes = match[1] === ""
+                        ? [0]
+                        : match[1].split(";").map(function(code) { return Number(code) })
+
+                    for (let i = 0; i < codes.length; i++)
+                    {
+                        const code = codes[i]
+                        if (code === 0 || code === 39)
+                            currentColor = ""
+                        else if (colors[code] !== undefined)
+                            currentColor = colors[code]
+                    }
+                    lastIndex = sgr.lastIndex
+                }
+
+                result += segmentToHtml(text.slice(lastIndex), currentColor)
+                return result
+            }
+
+            function appendOutput(text) {
+                outputHtml += ansiToHtml(text)
+                commandOutput.text = outputHtml
+            }
+
+            function clearOutput() {
+                outputHtml = ""
+                commandOutput.text = ""
+            }
 
             function submitCommand() {
                 const command = commandField.text.trim()
@@ -82,7 +153,7 @@ ApplicationWindow {
                 
                     commandRunning = true
                     commandError.text = ""
-                    commandOutput.text += "$ " + command + "\n"
+                    dashboardRoot.appendOutput("$ " + command + "\n")
                     appController.executeCommand(command)
             }
 
@@ -92,65 +163,105 @@ ApplicationWindow {
 
                 commandRunning = true
                 commandError.text = ""
-                commandOutput.text += "$ " + displayCommand + "\n"
+                dashboardRoot.appendOutput("$ " + displayCommand + "\n")
                 appController.executePresetCommand(commandId)
             }
-            Column {
-                anchors.centerIn: parent
-                spacing: 20
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.top: parent.top
+                anchors.margins: 20
+                spacing: 12
 
                 Text {
                     text: "Dashboard"
+                    Accessible.name: "Dashboard"
                     font.pixelSize: 24
                 }
 
                 Text {
                     text: dashboardRoot.commandRunning ? "Befehl läuft ... " : "Bereit"
                 }
-                TextField {
-                    id: commandField
-                    placeholderText: "Hier Command eingeben"
-                    width: 400
-                    enabled: !dashboardRoot.commandRunning
+                // TextField {
+                //     id: commandField
+                //     placeholderText: "Hier Command eingeben"
+                //     Accessible.name: "Hier Command eingeben"
+                //     width: 400
+                //     enabled: !dashboardRoot.commandRunning
 
-                    onAccepted: dashboardRoot.submitCommand()
-                }
+                //     onAccepted: dashboardRoot.submitCommand()
+                // }
                 Row {
                     spacing: 10
-
-                    Button {
-                    text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
-                    enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.submitCommand()
-                }
+                    Layout.fillWidth: true
+                //     Button {
+                //     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
+                //     enabled: !dashboardRoot.commandRunning
+                //     onClicked: dashboardRoot.submitCommand()
+                // }
                 Button {
                     text:"Befehl abbrechen"
+                    Accessible.name: "Befehl abbrechen"
                     visible: dashboardRoot.commandRunning
                     onClicked: appController.cancelCommand()
                     }
                   }
                 
-                Row {
+            Row {
                     spacing: 10
+
                 Button {
-                    text: "Benutzer"
+                    text: "Status"
+                    Accessible.name: "Status"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("whoami", "whoami")
+                    onClicked: dashboardRoot.runPreset("status", "qking")
                 }
 
                 Button {
-                    text: "Systemlaufzeit"
+                    text: "Restart"
+                    Accessible.name: "Restart"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("uptime", "uptime")
+                    onClicked: dashboardRoot.runPreset("restart", "restart")
                 }
 
                 Button {
-                    text: "Datenträger"
+                    text: "Stop"
+                    Accessible.name: "Stop"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("disk-usage", "df -h")
+                    onClicked: dashboardRoot.runPreset("stop", "stop")
+                }
+                }
+
+            Row {
+                spacing: 10
+
+                Button {
+                    text: "Rebuild Database"
+                    Accessible.name: "Rebuild Database"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("rebuildDb", "make reinstall Database")
+                }
+
+                Button {
+                    text: "Reinstall Database"
+                    Accessible.name: "Reinstall Database"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("reinstallDb", "make install Database")
+                }
+
+                Button {
+                    text: "Reinstall KiSoft"
+                    Accessible.name: "Rebuild Database"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("reinstallKiSoft", "make reinstall Database")
+                }   
+            
+                Button {
+                    text: "Reinstall All"
+                    Accessible.name: "Reinstall all"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.runPreset("reinstallAll", "make reinstall all")
                 }
             }
-
 
                 Text {
                     id: commandError
@@ -161,8 +272,10 @@ ApplicationWindow {
 
                 ScrollView {
                     id: commandOutputScroll
-                    width: 600
-                    height: 300
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 150
+                    Layout.preferredHeight: 300
                     clip: true
                     ScrollBar.vertical: ScrollBar {
                         policy: ScrollBar.AsNeeded
@@ -171,13 +284,16 @@ ApplicationWindow {
                         anchors.right: parent.right
                         anchors.topMargin: 10
                     }
+                    ScrollBar.horizontal.policy: ScrollBar.AsNeeded
                 
 
                 TextArea {
                     id: commandOutput
                     width: commandOutputScroll.availableWidth
                     readOnly: true
-                    wrapMode: TextArea.Wrap
+                    wrapMode: TextArea.NoWrap
+                    textFormat: TextEdit.RichText
+                    font.family: "monospace"
 
                     onTextChanged: Qt.callLater(function() {
                         const bar = commandOutputScroll.ScrollBar.vertical
@@ -185,13 +301,32 @@ ApplicationWindow {
                         })
                     }
                 }
+                    
+                Item {
+                    Layout.fillWidth: true
+                    height: Math.max(statusLabel.implicitHeight,
+                                    clearOutputButton.implicitHeight)
 
-                Text {
-                    text: "Status: " + (appController.loggedIn ? "Eingeloggt" : "Ausgeloggt")
+                    Text {
+                        id: statusLabel
+                        anchors.left: parent.left
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Status: " + (appController.loggedIn ? "Eingeloggt" : "Ausgeloggt")
+                    }
+
+                    Button {
+                        id: clearOutputButton
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "Ausgabe leeren"
+                        Accessible.name: "Ausgabe leeren"
+                        onClicked: dashboardRoot.clearOutput()
+                    }
                 }
 
                 Button {
                     text: "Ausloggen"
+                    Accessible.name: "Ausloggen"
 
                     onClicked: {
                         appController.attemptLogout()
@@ -203,7 +338,7 @@ ApplicationWindow {
 
                 function onCommandCompleted(standardOutput, standardError, exitStatus) {
                     dashboardRoot.commandRunning = false
-                    commandOutput.text += standardOutput + standardError
+                    appendOutput(standardOutput + standardError)
 
                     if (exitStatus !== 0) {
                         commandError.text = "Befehl beendet mit Exit-Code " + exitStatus
@@ -215,14 +350,57 @@ ApplicationWindow {
                 function onCommandFailed(message) {
                     dashboardRoot.commandRunning = false
                     commandError.text = message
-                    commandOutput.text += "\n[Fehler] " + message + "\n"
+                    dashboardRoot.appendOutput("\n[Fehler] " + message + "\n")
                 }
 
                 function onCommandCancelled() {
                     dashboardRoot.commandRunning = false
                     commandError.text = ""
-                    commandOutput.text += "\n[Befehl abgebrochen]\n"
+                    dashboardRoot.appendOutput("\n[Befehl abgebrochen]\n")
                 }
+
+                function onCommandInputRequested(prompt, secret) {
+                    commandInputDialog.prompt = prompt
+                    commandInputDialog.secret = secret
+                    commandInputDialog.open()
+                }
+            }
+            Dialog {
+                id: commandInputDialog
+                anchors.centerIn: Overlay.overlay
+                modal: true
+                title: secret ? "Passwort eingeben" : "Eingabe benötigt"
+                standardButtons: Dialog.Ok | Dialog.Cancel
+
+                property string prompt: ""
+                property bool secret: false
+
+                contentItem: Column {
+                    spacing: 8
+                }
+
+                Text {
+                    text: commandInputDialog.Prompt
+                    wrapMode: Text.Wrap
+                }
+
+                TextField {
+                    id: commandInputField
+                    echoMode: commandInputDialog.secret 
+                              ? TextInput.Password 
+                              : TextInput.Normal
+                }
+            
+
+            onAccepted: {
+                appController.submitCommandInput(commandInputField.text)
+                commandInputField.clear()
+            }
+
+            onRejected: {
+                commandInputField.clear()
+                appController.cancelCommand()
+            }
             }
         }
     }
@@ -243,10 +421,12 @@ ApplicationWindow {
 
             Text {
                 text: "Login Failed!"
+                Accessible.name: "Login failed"
             }
 
             Button {
                 text: "OK"
+                Accessible.name: "OK"
                 onClicked: loginFailedPopup.close()
             }
         }
@@ -273,6 +453,7 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         modal: true
         title: qsTr("SSH-Host-Key bestätigen")
+        Accessible.name: "SSH-Host-Key bestätigen"
         standardButtons: Dialog.Yes | Dialog.No
 
         property string fingerprint: ""

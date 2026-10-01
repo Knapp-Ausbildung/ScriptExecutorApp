@@ -7,16 +7,12 @@
 AppController::AppController(QObject *parent) 
   : QObject(parent), 
   m_loginService(new LoginService(this)) {
-  connect(m_loginService, 
-          &LoginService::hostKeyConfirmationRequested, 
-          this, 
-          &AppController::hostKeyConfirmationRequested);
+  connect(m_loginService, &LoginService::hostKeyConfirmationRequested, 
+          this, &AppController::hostKeyConfirmationRequested);
 
   // Verbinden des AppControllers mit dem LoginService und auf entsprechende Seite wechseln
-  connect(m_loginService, 
-          &LoginService::loginFinished, 
-          this, 
-          [this](bool success) {
+  connect(m_loginService, &LoginService::loginFinished, 
+          this, [this](bool success) {
     emit loggedInChanged();
 
     if(success) {
@@ -27,10 +23,8 @@ AppController::AppController(QObject *parent)
     }
   });
 
-  connect(m_loginService, 
-          &LoginService::loggedOut, 
-          this, 
-          [this] {
+  connect(m_loginService, &LoginService::loggedOut, 
+          this, [this] {
     emit loggedInChanged();
     openLogin();
   });
@@ -42,6 +36,8 @@ AppController::AppController(QObject *parent)
           this, &AppController::commandFailed);
   connect(m_loginService, &LoginService::commandCancelled,
           this, &AppController::commandCancelled);
+  connect(m_loginService, &LoginService::commandInputRequested,
+          this, &AppController::commandInputRequested);
   }
 
 // Getter
@@ -91,4 +87,8 @@ void AppController::executePresetCommand(const QString &commandId) {
 
 void AppController::cancelCommand() {
   m_loginService->cancelCommand();
+}
+
+void AppController::submitCommandInput(const QString &input) {
+  m_loginService->submitCommandInput(input);
 }

@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 #include <QTimer>
+#include <QMutex>
+#include <QByteArray>
 
 #include <atomic>
 #include <libssh/libssh.h>
@@ -28,6 +30,7 @@ public slots:
     void cancelCommand();
     void executeCommand(const QString &command);
     void executePresetCommand(const QString &commandId);
+    void submitCommandInput(const QString &input);
 
 signals:
     void hostKeyConfirmationRequested(const QString &host,
@@ -40,12 +43,15 @@ signals:
                           int exitStatus);
     void commandCancelled();
     void commandFailed(const QString &message);
+    void commandInputRequested(const QString &prompt, bool secret);
 
 private:
     bool authenticatePendingLogin();
     void failLogin(const QString &message);
     void cleanup();
     void checkConnection();
+    
+    void executeCommandInternal(const QString &command, bool requestPty);
 
     QTimer *m_keepAliveTimer = nullptr;
     int m_keepAliveFailures = 0;
@@ -56,4 +62,8 @@ private:
     bool m_connected = false;
     bool m_waitingForHostKeyConfirmation = false;
     std::atomic_bool m_cancelRequested = false;
+
+    QMutex m_inputMutex;
+    QByteArray m_pendingInput;
+    bool m_inputPending = false;
 };

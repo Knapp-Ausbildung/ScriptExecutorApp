@@ -53,6 +53,8 @@ public slots: // public slots sind für QML aufrufbar.
   void executePresetCommand(const QString &commandId);
   void cancelCommand();
 
+  void submitCommandInput(const QString &input);
+
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
@@ -70,6 +72,7 @@ signals:
                         int exitStatus);
   void commandCancelled();
   void commandFailed(const QString &message);
+  void commandInputRequested(const QString &prompt, bool secret);
 
 private:
   LoginService *m_loginService;

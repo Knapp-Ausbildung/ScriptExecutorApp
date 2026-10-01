@@ -41,6 +41,8 @@ signals:
   void commandCancelled();
   void commandFailed(const QString &message);
   void executePresetCommandRequested(const QString &commandId);
+  void commandInputRequested(const QString &prompt, bool secret);
+  void commandInputSubmitted(const QString &input);
 
 public slots:
   void login(const QString &host, 
@@ -53,7 +55,8 @@ public slots:
   void cancelCommand();
   void executeCommand(const QString &message);
   void executePresetCommand(const QString &commandId);
-
+  void submitCommandInput(const QString &input);
+  
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;

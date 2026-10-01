@@ -62,6 +62,12 @@ LoginService::LoginService(QObject *parent)
           this, &LoginService::commandCancelled);
   connect(m_worker, &SshWorker::commandFailed,
           this, &LoginService::commandFailed);
+  // Connection für Abfrage der Passwortaufforderung, wenn benötigt       
+  connect(m_worker, &SshWorker::commandInputRequested,
+          this, &LoginService::commandInputRequested);
+  connect(this, &LoginService::commandInputSubmitted,
+          m_worker, &SshWorker::submitCommandInput,
+          Qt::DirectConnection);
 
   m_thread->start();
 }
@@ -94,6 +100,10 @@ void LoginService::logout() {
 
 void LoginService::cancelCommand() {
   emit cancelCommandRequested();
+}
+
+void LoginService::submitCommandInput(const QString &input) {
+  emit commandInputSubmitted(input);
 }
 
 void LoginService::executeCommand(const QString &command) {

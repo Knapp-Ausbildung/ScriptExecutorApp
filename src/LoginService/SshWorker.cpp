@@ -4,6 +4,8 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QThread>
+#include <QMutexLocker>
+#include <QRegularExpression>
 
 #include <cstddef>
 
@@ -69,6 +71,7 @@ void SshWorker::login(const QString &host,
   cleanup();
 
   m_session = ssh_new();
+
   // Mögliche bestehende Verbindung sauber schließen
   if(m_session == nullptr) {
     failLogin("SSH session could not be created");
@@ -245,6 +248,7 @@ void SshWorker::checkConnection() {
       emit loggedOut();
     }
 }
+
 void SshWorker::cleanup() {
   if (m_keepAliveTimer != nullptr) {
     m_keepAliveTimer->stop();
@@ -281,7 +285,14 @@ void SshWorker::cancelCommand() {
     m_cancelRequested.store(true, std::memory_order_release);
 }
 
+// Zum Ausführen von Commands mithilfe eines nicht interaktiven Terminals
 void SshWorker::executeCommand(const QString &command) {
+  executeCommandInternal(command, false);
+}
+
+// Zum Ausführen commands mit true | false option ob Pseudo-Terminal benutzt wird oder nicht
+void SshWorker::executeCommandInternal(const QString &command,
+                                       bool requestPty) {
     
     // Überprüfung für eingeloggt und verbunden sein
     if (m_session == nullptr || !m_connected || !m_loggedIn) {
@@ -332,7 +343,16 @@ void SshWorker::executeCommand(const QString &command) {
         emit commandFailed(error);
         return;
     }
-    
+
+    if (requestPty && ssh_channel_request_pty(channel) != SSH_OK) {
+      const QString error = 
+        QString("Could not request terminal: %1")
+               .arg(ssh_get_error(m_session));
+        closeChannel();
+        emit commandFailed(error);
+        return;
+    }
+
     if (ssh_channel_request_exec(channel, commandBytes.constData()) != SSH_OK) {
         const QString error = QString ("Could not start command: %1")
                                       .arg(ssh_get_error(m_session));
@@ -352,6 +372,9 @@ void SshWorker::executeCommand(const QString &command) {
     QElapsedTimer cancellationTimer;
     int cancellationStage = 0;
     bool cancellationTimedOut = false;
+
+    QByteArray promptBuffer;
+    bool waitingForInput = false;
 
     while  (true) {
 
@@ -406,6 +429,7 @@ void SshWorker::executeCommand(const QString &command) {
             }
 
             stdoutData.append(buffer, stdoutCount);
+            promptBuffer.append(buffer, stdoutCount);
             receivedData = true;
         }
 
@@ -429,7 +453,61 @@ void SshWorker::executeCommand(const QString &command) {
             }
 
             stderrData.append(buffer, stderrCount);
+            promptBuffer.append(buffer, stderrCount);
             receivedData = true;
+        }
+
+        constexpr qsizetype maxPromptBytes = 256;
+
+        if (promptBuffer.size() > maxPromptBytes) {
+            promptBuffer.remove(0, promptBuffer.size() - maxPromptBytes);
+        }
+        
+        QString promptText = QString::fromUtf8(promptBuffer);
+
+        static const QRegularExpression ansiSgr(R"(\x1B\[[0-9;]*m)");
+        promptText.remove(ansiSgr);
+
+        static const QRegularExpression passwordPrompt(R"((password|passphrase|passcode)[^\r\n]{0,80}[:?]\s*$)",
+                                                       QRegularExpression::CaseInsensitiveOption);
+        if(!waitingForInput && passwordPrompt.match(promptText).hasMatch()) {
+          waitingForInput = true;
+          emit commandInputRequested(promptText.trimmed(), true);
+        }
+
+        QByteArray response;
+        {
+          QMutexLocker locker(&m_inputMutex);
+          if (m_inputPending) {
+            response.swap(m_pendingInput);
+            m_inputPending = false;
+          }
+        }
+
+        if(!response.isEmpty()) {
+          int offset = 0;
+
+          while (offset < response.size()) {
+            const int written = ssh_channel_write(channel, response.constData() + offset, response.size() - offset);
+
+            if (written <= 0) {
+              readError = QString ("Could not send command input: %1")
+                                   .arg(ssh_get_error(m_session));
+
+              break;
+            }
+
+            offset += written;
+          }
+
+          response.fill('\0');
+
+          if (!readError.isEmpty()) {
+            break;
+          }
+
+          waitingForInput = false;
+          promptBuffer.clear();
         }
 
         if(ssh_channel_is_eof(channel) && !receivedData) {
@@ -475,19 +553,58 @@ void SshWorker::executeCommand(const QString &command) {
 void SshWorker::executePresetCommand(const QString &commandId)
 {
     QString command;
+    
+    bool requestPty = false;
 
-    if (commandId == "hostname") {
-        command = "hostname";
-    } else if (commandId == "whoami") {
-        command = "whoami";
-    } else if (commandId == "uptime") {
-        command = "uptime";
-    } else if (commandId == "disk-usage") {
-        command = "df -h";
-    } else {
+    if (commandId == "status") {
+        
+      requestPty = true;
+      const QString qkingInvocation = 
+                  "'/kisoft/user/KiSoft-One/wcs/lager/bin/qking'";
+
+      command = "bash -lc " + quoteShellArgument(qkingInvocation);
+    } else if (commandId == "restart") {
+
+      requestPty = true;
+      command = "sudo env SYSTEMD_COLORS=0 systemctl --no-pager restart kisoft-one.service";
+    } else if (commandId == "stop") {
+
+      requestPty = true;
+      command = "sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop kisoft-one.service";
+    } 
+    else if (commandId == "rebuildDb") {
+
+        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make reinstall'";
+    } else if (commandId == "reinstallDb") {
+
+        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && yes y | make install'";
+    } else if (commandId == "reinstallKiSoft") {
+
+        command = "bash -lc 'cd \"$WCS_ROOT/\" && make release'";
+    } else if (commandId == "reinstallAll") {
+        
+        requestPty = true;
+        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && cd \"$KX_SRC_ROOT/afgui\" && yes y | make uninstall  && sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop nginx-kisoft-one.service && cd \"$WCS_ROOT/../test/tool\" && ./KXrelease.sh'";
+    }
+    
+    else {
+
         emit commandFailed("Unkown predefined command");
         return;
     }
 
-    executeCommand(command);
+    executeCommandInternal(command, requestPty);
+}
+
+void SshWorker::submitCommandInput(const QString &input) {
+  QByteArray bytes = input.toUtf8();
+  bytes.append('\n');
+
+    {
+      QMutexLocker locker(&m_inputMutex);
+      m_pendingInput = bytes;
+      m_inputPending = true;
+    }
+
+  bytes.fill('\0');
 }
