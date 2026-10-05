@@ -181,23 +181,23 @@ ApplicationWindow {
                 Text {
                     text: dashboardRoot.commandRunning ? "Befehl läuft ... " : "Bereit"
                 }
-                // TextField {
-                //     id: commandField
-                //     placeholderText: "Hier Command eingeben"
-                //     Accessible.name: "Hier Command eingeben"
-                //     width: 400
-                //     enabled: !dashboardRoot.commandRunning
+                TextField {
+                    id: commandField
+                    placeholderText: "Hier Command eingeben"
+                    Accessible.name: "Hier Command eingeben"
+                    width: 400
+                    enabled: !dashboardRoot.commandRunning
 
-                //     onAccepted: dashboardRoot.submitCommand()
-                // }
+                    onAccepted: dashboardRoot.submitCommand()
+                }
                 Row {
                     spacing: 10
                     Layout.fillWidth: true
-                //     Button {
-                //     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
-                //     enabled: !dashboardRoot.commandRunning
-                //     onClicked: dashboardRoot.submitCommand()
-                // }
+                    Button {
+                    text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
+                    enabled: !dashboardRoot.commandRunning
+                    onClicked: dashboardRoot.submitCommand()
+                }
                 Button {
                     text:"Befehl abbrechen"
                     Accessible.name: "Befehl abbrechen"

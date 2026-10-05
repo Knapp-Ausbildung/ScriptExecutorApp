@@ -76,7 +76,11 @@ signals:
 
 private:
   LoginService *m_loginService;
-
+  
+  void writeCommandLog(const QString &standardOutput,
+                       const QString & standardError,
+                       int exitStatus) const;
+  
   // Aktueller Screen / Zustand der App.
   // Beispiele:
   // "login" -> Login-Bildschirm
