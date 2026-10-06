@@ -313,14 +313,23 @@ ApplicationWindow {
                         anchors.verticalCenter: parent.verticalCenter
                         text: "Status: " + (appController.loggedIn ? "Eingeloggt" : "Ausgeloggt")
                     }
-
-                    Button {
-                        id: clearOutputButton
+                    Row {
+                        id: logActionsRow
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
+                        spacing: 10
+
+                    Button {
+                        text: "Logs öffnen"
+                        Accessible.name: "Logs öffnen"
+                        onClicked: appController.openLogsFolder();
+                    }
+                    Button {
+                        id: clearOutputButton
                         text: "Ausgabe leeren"
                         Accessible.name: "Ausgabe leeren"
                         onClicked: dashboardRoot.clearOutput()
+                    }
                     }
                 }
 
@@ -380,7 +389,7 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: commandInputDialog.Prompt
+                    text: commandInputDialog.prompt
                     wrapMode: Text.Wrap
                 }
 

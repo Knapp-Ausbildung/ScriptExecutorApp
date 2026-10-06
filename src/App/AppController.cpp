@@ -8,6 +8,8 @@
 #include <QDebug>
 #include <QRegularExpression>
 #include <qglobal.h>
+#include <QDesktopServices>
+#include <QUrl>
 
 namespace {
   QString removeAnsiSequence(QString text) {
@@ -115,8 +117,8 @@ void AppController::submitCommandInput(const QString &input) {
 }
 
 void AppController::writeCommandLog(const QString &standardOutput,
-                                 const QString &standardError,
-                                 int exitStatus) const {
+                                    const QString &standardError,
+                                    int exitStatus) const {
   const QString logsPath = QDir::current().filePath("logs");
 
   QDir logsDir;
@@ -170,5 +172,18 @@ void AppController::writeCommandLog(const QString &standardOutput,
 
   if (needsArchive && !QFile::copy(logFilePath, archivedFilePath)) {
     qWarning() << "Logdatei konnte nicht archiviert werden: " << archivedFilePath;
+  }
+}
+
+void AppController::openLogsFolder() {
+  const QString logsPath = QDir::current().absoluteFilePath("logs");
+
+  if(!QDir().mkpath(logsPath)) {
+    qWarning() << "Log-Ordner konnte nicht erstellt werden: " << logsPath;
+    return;
+  }
+
+  if (!QDesktopServices::openUrl(QUrl::fromLocalFile(logsPath))) {
+    qWarning() << "Log-Ordner konnte nicht geöffnet werden: " << logsPath;
   }
 }

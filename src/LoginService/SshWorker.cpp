@@ -554,6 +554,7 @@ void SshWorker::executePresetCommand(const QString &commandId)
 {
     QString command;
     
+    // Set before the commands to true if you need a Pseudo-Terminal
     bool requestPty = false;
 
     if (commandId == "status") {

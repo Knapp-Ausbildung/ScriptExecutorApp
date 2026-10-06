@@ -55,6 +55,8 @@ public slots: // public slots sind für QML aufrufbar.
 
   void submitCommandInput(const QString &input);
 
+  void openLogsFolder();
+  
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
