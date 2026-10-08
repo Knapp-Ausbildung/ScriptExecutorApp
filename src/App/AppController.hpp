@@ -3,6 +3,8 @@
 #include "src/LoginService/LoginService.hpp"
 #include <QObject>
 #include <QString>
+#include <QStringList>
+#include <QUrl>
 #include <qglobal.h>
 #include <qtmetamacros.h>
 
@@ -56,7 +58,18 @@ public slots: // public slots sind für QML aufrufbar.
   void submitCommandInput(const QString &input);
 
   void openLogsFolder();
+
+  bool sendRepoLink(const QString &repoLink);
   
+  void loadRemoteBranches(const QString &url);
+
+  bool selectRemoteBranch(const QString &branch);
+
+  void fetchSelectedBranch();
+  void pullSelectedBranch();
+  void replaceSelectedRepository();
+  void loadInstalledRepositoryBranches();
+
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
@@ -76,6 +89,9 @@ signals:
   void commandFailed(const QString &message);
   void commandInputRequested(const QString &prompt, bool secret);
 
+  void remoteBranchesLoaded(const QStringList &branches);
+  void remoteBranchesFailed(const QString &message);
+
 private:
   LoginService *m_loginService;
   
@@ -88,4 +104,12 @@ private:
   // "login" -> Login-Bildschirm
   // "dashboard" -> Hauptbildschirm
   QString m_currentScreen = "login";
+
+  QString m_selectedRepoUrl;
+
+  bool m_loadingRemoteBranches = false;
+  bool m_loadingInstalledRepositoryOrigin = false;
+  QStringList m_availableBranches;
+  QString m_selectedBranch;
+
 };

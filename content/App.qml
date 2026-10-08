@@ -181,23 +181,82 @@ ApplicationWindow {
                 Text {
                     text: dashboardRoot.commandRunning ? "Befehl läuft ... " : "Bereit"
                 }
-                TextField {
-                    id: commandField
-                    placeholderText: "Hier Command eingeben"
-                    Accessible.name: "Hier Command eingeben"
-                    width: 400
-                    enabled: !dashboardRoot.commandRunning
+                
+                Row {
+                    spacing: 10
 
-                    onAccepted: dashboardRoot.submitCommand()
+                    Button {
+                        text: "Setup Repository"
+                        Accessible.name: "Import Branch"
+                        onClicked: selectRepo.open()
+                    }
+
+                    Button {
+                        text: "Fetch current branch"
+                        enabled: !dashboardRoot.commandRunning
+
+                        onClicked: {
+                            if (dashboardRoot.commandRunning)
+                                return
+
+                            dashboardRoot.commandRunning = true
+                            commandError.text = ""
+                            appController.fetchSelectedBranch()
+                        }
+                    }
+
+                    Button {
+                        text: "Pull current branch"
+                        enabled: !dashboardRoot.commandRunning
+
+                        onClicked: {
+                            if(dashboardRoot.commandRunning) {
+                                return
+                            }
+
+                            dashboardRoot.commandRunning = true
+                            commandError.text = ""
+                            appController.pullSelectedBranch()
+                        }
+                    }
+
+                    Button {
+                        text: "Get new Branch"
+                        enabled: !dashboardRoot.commandRunning
+
+                        onClicked: {
+                            if (dashboardRoot.commandRunning) {
+                                return
+                            }
+
+                            dashboardRoot.commandRunning = true
+                            commandError.text = ""
+                            selectBranchChoice.model = []
+                            selectBranchChoice.currentIndex = -1
+                            appController.loadInstalledRepositoryBranches()
+                        }
+
+                    }
+
                 }
+
+                // TextField {
+                //     id: commandField
+                //     placeholderText: "Hier Command eingeben"
+                //     Accessible.name: "Hier Command eingeben"
+                //     width: 400
+                //     enabled: !dashboardRoot.commandRunning
+
+                //     onAccepted: dashboardRoot.submitCommand()
+                // }
                 Row {
                     spacing: 10
                     Layout.fillWidth: true
-                    Button {
-                    text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
-                    enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.submitCommand()
-                }
+                //     Button {
+                //     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
+                //     enabled: !dashboardRoot.commandRunning
+                //     onClicked: dashboardRoot.submitCommand()
+                // }
                 Button {
                     text:"Befehl abbrechen"
                     Accessible.name: "Befehl abbrechen"
@@ -373,6 +432,11 @@ ApplicationWindow {
                     commandInputDialog.secret = secret
                     commandInputDialog.open()
                 }
+
+                function onInstalledRepositoryPullStarted() {
+                    dashboardRoot.commandRunning = true
+                    commandError.text = ""
+                }
             }
             Dialog {
                 id: commandInputDialog
@@ -488,5 +552,138 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: selectRepo
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "Repository festlegen"
+        Accessible.name: "Repository festlegen"
 
+        property string repo: ""
+        property string errorMessage: ""
+        property bool loadingBranches: false
+
+        contentItem: Column {
+            spacing: 8
+
+            Text {
+                text: "Repository Link"
+            }
+
+            Row {
+                spacing: 8
+            TextField {
+                width: 400
+                id: repoURL
+                placeholderText: "Link hier einfügen!"
+            }
+            Button {
+                enabled: !selectRepo.loadingBranches
+                text: selectRepo.loadingBranches 
+                      ? "Branches werden geladen ..." 
+                      : "Branches laden"
+
+                onClicked: {
+                    console.log("Repository bestätigt: ", repoURL.text)
+                    selectRepo.errorMessage = ""
+
+                    if (appController.sendRepoLink(repoURL.text)) {
+                        selectRepo.errorMessage = ""
+                        selectRepo.loadingBranches = true
+                        appController.loadRemoteBranches(repoURL.text)
+                    } else {
+                        selectRepo.errorMessage = "Bitte einen gültigen Repository-Link einfügen!"
+                    }
+                }
+            }
+        
+        }
+            Text {
+                text: selectRepo.errorMessage
+                color: "red"
+                visible: text.length > 0
+                wrapMode: Text.Wrap
+            }
+        }
+    }
+
+    Connections {
+        target: appController
+
+        function onRemoteBranchesLoaded(branches) {
+            dashboardRoot.commandRunning = false
+            selectRepo.loadingBranches = false;
+            selectBranchChoice.model = branches
+
+            if (selectRepo.visible) {
+                selectRepo.close()
+            }
+
+            selectBranchDialog.open()
+        }
+
+        function onRemoteBranchesFailed(message) {
+            dashboardRoot.commandRunning = false
+
+            if (selectRepo.visible) {
+                selectRepo.loadingBranches = false
+                selectRepo.errorMessage = message
+            } else {
+            commandError.text = message
+            }
+        }   
+    }
+    
+    Dialog {
+        id: selectBranchDialog
+        title: "Bitte Branch auswählen"
+        Accessible.name: "Branch auswählen"
+        anchors.centerIn: Overlay.overlay
+        modal: true
+
+        contentItem: Column {
+            spacing: 8
+
+        ComboBox {
+            width: 300
+            id: selectBranchChoice
+            model: []
+            currentIndex: -1
+        }
+
+        Button {
+            id: confirmBranch
+            enabled: selectBranchChoice.currentIndex >= 0
+            text: "Branch auswählen"
+            Accessible.name: "Branch auswählen"
+
+            property string selectedBranch: ""
+
+            onClicked: {
+                if (appController.selectRemoteBranch(selectBranchChoice.currentText)) {
+                    selectBranchDialog.close()
+                    replaceRepositoryDialog.open()
+                }
+            }
+        }
+      }
+    }
+
+    Dialog {
+        id: replaceRepositoryDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "Repository vollständig ersetzen?"
+        standardButtons: Dialog.Yes | Dialog.No
+
+        contentItem: Text {
+            text: "Ziel: /kisoft/user/testing\n\n" + 
+                  "ACHTUNG! Es werden ALLE bereits existierenden Dateien und lokalen Änderungen gelöscht \n" +
+                  "und anschließend durch den ausgewählten Remote-Branch ersetzt! \n" + 
+                  "Dies kann nicht wieder hergestellt werden! \n\n Fortfahren?"
+            wrapMode: Text.wrap
+        }
+
+        onAccepted: appController.replaceSelectedRepository()
+    }
 }

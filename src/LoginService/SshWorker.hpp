@@ -25,12 +25,23 @@ public slots:
     void confirmHostKey();
     void rejectHostKey();
     void logout();
+    
 
     void prepareCommand();
     void cancelCommand();
     void executeCommand(const QString &command);
     void executePresetCommand(const QString &commandId);
     void submitCommandInput(const QString &input);
+
+    void loadRemoteBranches(const QString &url);
+    void fetchRemoteBranch(const QString &url,
+                           const QString &branch);
+    void pullRemoteBranch(const QString &url,
+                          const QString &branch);
+    void replaceRepository(const QString &url,
+                           const QString &branch);
+
+    void loadInstalledRepositoryOrigin();
 
 signals:
     void hostKeyConfirmationRequested(const QString &host,
@@ -51,6 +62,16 @@ private:
     void cleanup();
     void checkConnection();
     
+    bool validateGitRequest(const QString &urlText,
+                            QString &normalizedUrl,
+                            QString &error) const;    
+                            
+    bool validateGitRequest(const QString &urlText,
+                            const QString &branchText,
+                            QString &normalizedUrl,
+                            QString &normalizedBranch,
+                            QString &error) const;
+
     void executeCommandInternal(const QString &command, bool requestPty);
 
     QTimer *m_keepAliveTimer = nullptr;

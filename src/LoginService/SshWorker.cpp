@@ -6,6 +6,7 @@
 #include <QThread>
 #include <QMutexLocker>
 #include <QRegularExpression>
+#include <QUrl>
 
 #include <cstddef>
 
@@ -248,6 +249,49 @@ void SshWorker::checkConnection() {
       emit loggedOut();
     }
 }
+
+bool SshWorker::validateGitRequest(const QString &urlText,
+                                   QString &normalizedUrl,
+                                   QString &error) const {
+  if (m_session == nullptr || !m_connected || !m_loggedIn) {
+    error = "No authenticated SSH connection";
+    return false;
+  }
+
+  const QUrl remote(urlText.trimmed());
+
+  if (!remote.isValid() ||
+      remote.scheme() != QStringLiteral("https") ||
+      remote.host().isEmpty() ||
+      !remote.userInfo().isEmpty()) {
+    error = "Invalid HTTPS repository URL";
+    return false;
+  }
+
+  normalizedUrl = remote.toString(QUrl::FullyEncoded);
+  return true;
+}
+                        
+bool SshWorker::validateGitRequest(const QString &urlText,
+                                   const QString &branchText,
+                                   QString &normalizedUrl,
+                                   QString &normalizedBranch,
+                                   QString &error) const {
+
+  if (!validateGitRequest(urlText, normalizedUrl, error)) {
+    return false;
+  }
+
+  normalizedBranch = branchText.trimmed();
+
+  if (normalizedBranch.isEmpty()) {
+    error = "Branch must not be empty";
+    return false;
+  }
+
+  return true;
+}
+                     
 
 void SshWorker::cleanup() {
   if (m_keepAliveTimer != nullptr) {
@@ -608,4 +652,174 @@ void SshWorker::submitCommandInput(const QString &input) {
     }
 
   bytes.fill('\0');
+}
+
+void SshWorker::loadRemoteBranches(const QString &urlText) {
+  
+  QString normalizedUrl;
+  QString error;
+  
+  if (!validateGitRequest(urlText,  
+                          normalizedUrl, error)) {
+  
+    emit commandFailed(error);
+  return;
+  }       
+    const QString command = "git ls-remote --heads " + 
+                            quoteShellArgument(normalizedUrl);
+                          
+    executeCommandInternal(command, false);
+}
+
+void SshWorker::fetchRemoteBranch(const QString &urlText,
+                                  const QString &branchText) {
+  QString normalizedUrl;
+  QString normalizedBranch;
+  QString error;
+  
+  if (!validateGitRequest(urlText, branchText, 
+                          normalizedUrl, normalizedBranch, error)) {
+  
+    emit commandFailed(error);
+  return;
+  } 
+
+  const QString repoPath = QStringLiteral("/kisoft/user/testing");
+  const QString refspec = QStringLiteral("refs/heads/") + normalizedBranch;
+
+  const QString command = "git -C " + quoteShellArgument(repoPath) +
+                          " fetch -- " + quoteShellArgument(normalizedUrl) 
+                          + " " + quoteShellArgument(refspec);
+
+  executeCommandInternal(command, false);
+}
+
+void SshWorker::pullRemoteBranch(const QString &urlText,
+                                 const QString &branchText) {
+
+  QString normalizedUrl;
+  QString normalizedBranch;
+  QString error;
+  
+  if (!validateGitRequest(urlText, branchText, 
+                          normalizedUrl, normalizedBranch, error)) {
+  
+    emit commandFailed(error);
+  return;
+  }                               
+
+const QString repoArg =
+    quoteShellArgument(QStringLiteral("/kisoft/user/testing"));
+const QString urlArg =
+    quoteShellArgument(normalizedUrl);
+const QString branchArg = quoteShellArgument(normalizedBranch);
+const QString sourceRef = QStringLiteral("refs/heads/") + normalizedBranch;
+const QString trackingRef =
+    QStringLiteral("refs/remotes/script-executor/") + normalizedBranch;
+const QString refspec = sourceRef + ":" + trackingRef;
+const QString refspecArg = quoteShellArgument(refspec);
+const QString localRefArg =
+    quoteShellArgument(QStringLiteral("refs/heads/") + normalizedBranch);
+const QString trackingRefArg = quoteShellArgument(trackingRef);
+
+// Bei lokalen Änderungen -> Abbruch; Bei unterschiedlchen Historie -> Befehl schlägt fehl;
+// Kurz vor Branch-Switch gibts ein erneutes fetch, um am aktuellen Stand zu sein
+const QString command =
+    "git -C " + repoArg +
+    " rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
+    "{ echo 'Configured path is not a Git repository' >&2; exit 2; }; "
+    "if [ -n \"$(git -C " + repoArg +
+    " status --porcelain --untracked-files=all)\" ]; then "
+    "echo 'Repository has local changes; commit, stash, or clean them first' >&2; "
+    "exit 3; "
+    "fi && "
+    "git -C " + repoArg + " fetch -- " + urlArg + " " + refspecArg + " && "
+    "if git -C " + repoArg + " show-ref --verify --quiet " + localRefArg + "; then "
+    "git -C " + repoArg + " switch " + branchArg + " && "
+    "git -C " + repoArg + " merge --ff-only " + trackingRefArg + "; "
+    "else "
+    "git -C " + repoArg + " switch --create " + branchArg + " " + trackingRefArg + "; "
+    "fi";
+
+  executeCommandInternal(command, false);
+}
+
+void SshWorker::replaceRepository(const QString &url, 
+                                  const QString &branch) {
+  QString normalizedUrl;
+  QString normalizedBranch;
+  QString error;
+  
+  if (!validateGitRequest(url, branch, 
+                          normalizedUrl, normalizedBranch, error)) {
+  
+    emit commandFailed(error);
+  return;
+  }
+
+  // Zuerst in ein temporäres Nachbarsverzeichnis geklont, aktuelles Verzeichnis wird umbennant
+  // Neues Verzeichnis wird erstellt und dort hineingecloned, wenn alles funktioniert hat
+  // wird altes Verzeichnis gelöscht 
+  const QString targetPath = QStringLiteral("/kisoft/user/testing");
+  const QString targetArg = quoteShellArgument(targetPath);
+  const QString stagingPattern =
+      quoteShellArgument(QStringLiteral("/kisoft/user/.testing-stage.XXXXXX"));
+  const QString branchArg = quoteShellArgument(normalizedBranch);
+  const QString urlArg = quoteShellArgument(normalizedUrl);
+
+  const QString command =
+      QStringLiteral("set -eu; target=") + targetArg +
+      QStringLiteral("; "
+                     "if [ -L \"$target\" ]; then "
+                     "echo 'Target path must not be a symlink' >&2; exit 2; fi; "
+                     "if [ -e \"$target\" ] && [ ! -d \"$target\" ]; then "
+                     "echo 'Target path exists but is not a directory' >&2; exit 3; fi; "
+                     "stage=$(mktemp -d ") + stagingPattern +
+      QStringLiteral(") || exit 4; "
+                     "if ! git clone --single-branch --branch ") + branchArg +
+      QStringLiteral(" -- ") + urlArg +
+      QStringLiteral(" \"$stage\"; then "
+                     "rm -rf -- \"$stage\"; exit 5; fi; "
+                     "if [ \"$(git -C \"$stage\" branch --show-current)\" != ") +
+      branchArg +
+      QStringLiteral(" ]; then "
+                     "echo 'Cloned branch does not match the selection' >&2; "
+                     "rm -rf -- \"$stage\"; exit 6; fi; "
+                     "old=\"${target}.replace-old.$(date +%Y%m%d%H%M%S).$$\"; "
+                     "had_old=0; "
+                     "if [ -e \"$target\" ]; then "
+                     "mv -- \"$target\" \"$old\" || "
+                     "{ rm -rf -- \"$stage\"; exit 7; }; "
+                     "had_old=1; fi; "
+                     "if mv -- \"$stage\" \"$target\"; then "
+                     "if [ \"$had_old\" -eq 1 ]; then "
+                     "rm -rf -- \"$old\" || "
+                     "{ echo 'New repository installed, but old directory remains' >&2; exit 8; }; "
+                     "fi; "
+                     "echo 'Repository replaced successfully'; "
+                     "else "
+                     "if [ \"$had_old\" -eq 1 ]; then "
+                     "mv -- \"$old\" \"$target\" || "
+                     "{ echo 'Replacement failed and old directory could not be restored' >&2; exit 9; }; "
+                     "fi; "
+                     "rm -rf -- \"$stage\"; "
+                     "echo 'Could not install the new repository' >&2; exit 10; "
+                     "fi");
+
+  executeCommandInternal(command, false);
+}
+
+void SshWorker::loadInstalledRepositoryOrigin() {
+  if (m_session == nullptr || !m_connected || !m_loggedIn) {
+    emit commandFailed("No authenticated SSH connections");
+    return;
+  }
+
+  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/testing"));
+  const QString command = "git -C " + repoArg +
+                          " rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
+                          "{ echo 'Configured path is not a Git repository' >&2; exit 2; }; "
+                          "git -C " + repoArg + " remote get-url origin";
+
+  executeCommandInternal(command, false);
 }

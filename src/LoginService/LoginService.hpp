@@ -4,9 +4,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <libssh/libssh.h>
-#include <qobject.h>
+#include <QObject>
 #include <qtmetamacros.h>
-#include <qstring.h>
+#include <QString>
+#include <QStringList>
 
 class QThread;
 class SshWorker;
@@ -44,6 +45,16 @@ signals:
   void commandInputRequested(const QString &prompt, bool secret);
   void commandInputSubmitted(const QString &input);
 
+  void remoteBranchesRequested(const QString &url);
+  void remoteBranchesFailed(const QString &message);
+  void fetchRemoteBranchRequested(const QString &url,
+                                  const QString &branch);
+  void pullRemoteBranchRequested(const QString &url,
+                                 const QString &branch);
+  void replaceRepositoryRequested(const QString &url,
+                                  const QString &branch);
+  void installedRepositoryOriginRequested();
+
 public slots:
   void login(const QString &host, 
              const QString &username,
@@ -56,7 +67,15 @@ public slots:
   void executeCommand(const QString &message);
   void executePresetCommand(const QString &commandId);
   void submitCommandInput(const QString &input);
-  
+
+  void loadRemoteBranches(const QString &url);
+  void fetchRemoteBranch(const QString &url,
+                         const QString &branch);
+  void pullRemoteBranch(const QString &url,
+                        const QString &branch);
+  void replaceRepository(const QString &url,
+                         const QString &branch);
+  void loadInstalledRepositoryOrigin();
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;

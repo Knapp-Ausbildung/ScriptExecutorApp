@@ -34,6 +34,7 @@ LoginService::LoginService(QObject *parent)
           m_worker, &SshWorker::rejectHostKey, Qt::QueuedConnection);  
   connect(this, &LoginService::logoutRequested,
           m_worker, &SshWorker::logout, Qt::QueuedConnection); 
+          
   connect(this, &LoginService::prepareCommandRequested,
           m_worker, &SshWorker::prepareCommand, Qt::DirectConnection);
   connect(this, &LoginService::cancelCommandRequested,
@@ -42,6 +43,16 @@ LoginService::LoginService(QObject *parent)
           m_worker, &SshWorker::executeCommand, Qt::QueuedConnection);
   connect(this, &LoginService::executePresetCommandRequested,
           m_worker, &SshWorker::executePresetCommand, Qt::QueuedConnection);
+
+  connect(this, &LoginService::remoteBranchesRequested,
+          m_worker, &SshWorker::loadRemoteBranches,
+          Qt::QueuedConnection);
+  connect(this, &LoginService::pullRemoteBranchRequested,
+          m_worker, &SshWorker::pullRemoteBranch,
+          Qt::QueuedConnection);
+  connect(this, &LoginService::installedRepositoryOriginRequested,
+          m_worker, &SshWorker::loadInstalledRepositoryOrigin,
+          Qt::QueuedConnection);
 
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
   connect(m_worker, &SshWorker::hostKeyConfirmationRequested,
@@ -68,6 +79,13 @@ LoginService::LoginService(QObject *parent)
   connect(this, &LoginService::commandInputSubmitted,
           m_worker, &SshWorker::submitCommandInput,
           Qt::DirectConnection);
+
+  connect(this, &LoginService::fetchRemoteBranchRequested,
+          m_worker, &SshWorker::fetchRemoteBranch,
+          Qt::QueuedConnection);
+  connect(this, &LoginService::replaceRepositoryRequested,
+          m_worker, &SshWorker::replaceRepository,
+          Qt::QueuedConnection);
 
   m_thread->start();
 }
@@ -110,12 +128,42 @@ void LoginService::executeCommand(const QString &command) {
   emit prepareCommandRequested();
   emit executeCommandRequested(command);
 }
-LoginService::~LoginService() {
-  m_thread->quit();
-  m_thread->wait();
-}
 
 void LoginService::executePresetCommand(const QString &commandId) {
   emit prepareCommandRequested();
   emit executePresetCommandRequested(commandId);
+}
+
+void LoginService::loadRemoteBranches(const QString &url) {
+  emit prepareCommandRequested();
+  emit remoteBranchesRequested(url);
+}
+
+void LoginService::fetchRemoteBranch(const QString &url,
+                                     const QString &branch) {
+  emit prepareCommandRequested();
+  emit fetchRemoteBranchRequested(url, branch);                              
+}
+
+void LoginService::pullRemoteBranch(const QString &url,
+                                    const QString &branch) {
+  emit prepareCommandRequested();
+  emit pullRemoteBranchRequested(url, branch);
+}
+
+void LoginService::replaceRepository(const QString &url,
+                                     const QString &branch) {
+  emit prepareCommandRequested();
+  emit replaceRepositoryRequested(url, branch);                        
+}
+
+void LoginService::loadInstalledRepositoryOrigin() {
+  
+  emit prepareCommandRequested();
+  emit installedRepositoryOriginRequested();
+}
+
+LoginService::~LoginService() {
+  m_thread->quit();
+  m_thread->wait();
 }
