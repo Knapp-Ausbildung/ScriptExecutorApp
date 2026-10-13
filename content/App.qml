@@ -3,9 +3,69 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 
 ApplicationWindow {
+
     visible: true
     width: 1200
     height: 800
+    component AnimatedCommandButton: Item {
+        id: control
+
+        property string text: ""
+        property string accessibleName: text
+        property bool running: false
+        property var clickHandler: null
+
+        implicitWidth: innerButton.implicitWidth
+        implicitHeight: innerButton.implicitHeight
+
+        Button {
+            id: innerButton
+            anchors.fill: parent
+            text: control.text
+            Accessible.name: control.accessibleName
+
+            onClicked: {
+                if (control.clickHandler) {
+                    control.clickHandler()
+                
+                }
+            }
+        }
+
+        Rectangle {
+            id: pulseBorder
+                        
+            property color pulseColor: "#22c55e"
+
+            parent: innerButton.background
+            anchors.fill: parent
+            z: 1
+            enabled: false
+            color: "transparent"
+            border.width: 3
+            border.color: control.running ? pulseColor : "transparent"
+            radius: height / 2
+
+
+
+            SequentialAnimation on pulseColor {
+                running: control.running
+                loops: Animation.Infinite
+
+                ColorAnimation {
+                    from: "#22c55e"
+                    to: "#bbf7d0"
+                    duration: 1800
+                }
+
+                ColorAnimation {
+                    from: "#bbf7d0"
+                    to: "#22c55e"
+                    duration: 1800
+                }
+            }
+        }
+    }
 
     // Beispiel: Wenn eingeloggt -> Dashboard anzeigen
     // Wenn nicht eingeloggt -> Login-Formular anzeigen
@@ -79,15 +139,20 @@ ApplicationWindow {
             color: "#e8f5e9"
 
             property bool commandRunning: false
+
+            property string activeCommandButton: ""
             
             property string outputHtml: ""
+
+            property string gitUsernameCache: ""
+            property string gitPatCache: ""
 
             function escapeHtml(text) {
                 return String(text)
                             .replace(/&/g, "&amp;")
                             .replace(/</g, "&lt;")
                             .replace(/>/g, "&gt;")
-                            .replace(/\r/g, "")
+                            .replace(/\r\n?/g, "<br/>")
                             .replace(/\n/g, "<br/>")
                             .replace(/ /g, "&nbsp;")
             }
@@ -107,8 +172,12 @@ ApplicationWindow {
                         ? "<span style=\"color:" + color + "\">" + escaped + "</span>"
                         : escaped
                 }
+                    text = String(text).replace(/\u001b\[[0-?]*[ -/]*[@-~]/g,
+                    function (sequence) {
+                    return sequence.endsWith("m") ? sequence : ""
+                    })
 
-                const sgr = new RegExp("\\u001b\\[([0-9;]*)m", "g") 
+                    const sgr = /\u001b\[([0-9;]*)m/g
                       let result = ""
                       let currentColor = ""
                       let lastIndex = 0
@@ -157,10 +226,11 @@ ApplicationWindow {
                     appController.executeCommand(command)
             }
 
-            function runPreset(commandId, displayCommand) {
+            function runPreset(commandId, displayCommand, buttonId) {
                 if (commandRunning)
                 return
 
+                activeCommandButton = buttonId
                 commandRunning = true
                 commandError.text = ""
                 dashboardRoot.appendOutput("$ " + displayCommand + "\n")
@@ -181,19 +251,46 @@ ApplicationWindow {
                 Text {
                     text: dashboardRoot.commandRunning ? "Befehl läuft ... " : "Bereit"
                 }
+
+                Text {
+                    visible: !appController.installedRepositoryInfoLoaded
+                    text: "Repository wird geladen ..."
+                }
+
+                Text {
+                    visible: appController.installedRepositoryInfoLoaded &&
+                             appController.installedRepository.length === 0
+                    text: "Noch kein Repository geladen - bitte er das Setup durchführen"
+                }
+
+                Text {
+                    visible: appController.installedRepositoryInfoLoaded &&
+                             appController.installedRepository.length > 0
+                    text: "Aktuell geladenes Repository: " + appController.installedRepository
+                }
+
+                Text {
+                    visible: appController.installedRepositoryInfoLoaded &&
+                             appController.installedRepository.length > 0 
+                    text: "Aktueller Branch: " + appController.installedBranch
+                }
                 
                 Row {
                     spacing: 10
 
                     Button {
                         text: "Setup Repository"
+                        enabled: !dashboardRoot.commandRunning
                         Accessible.name: "Import Branch"
                         onClicked: selectRepo.open()
                     }
 
                     Button {
                         text: "Fetch current branch"
-                        enabled: !dashboardRoot.commandRunning
+                        enabled: !dashboardRoot.commandRunning &&
+                                 appController.installedRepositoryInfoLoaded &&
+                                 appController.installedRepository.length > 0 &&
+                                 appController.installedBranch.length > 0
 
                         onClicked: {
                             if (dashboardRoot.commandRunning)
@@ -207,8 +304,11 @@ ApplicationWindow {
 
                     Button {
                         text: "Pull current branch"
-                        enabled: !dashboardRoot.commandRunning
-
+                        enabled: !dashboardRoot.commandRunning &&
+                                 appController.installedRepositoryInfoLoaded &&
+                                 appController.installedRepository.length > 0 &&
+                                 appController.installedBranch.length > 0
+                                 
                         onClicked: {
                             if(dashboardRoot.commandRunning) {
                                 return
@@ -222,7 +322,10 @@ ApplicationWindow {
 
                     Button {
                         text: "Get new Branch"
-                        enabled: !dashboardRoot.commandRunning
+                        enabled: !dashboardRoot.commandRunning &&
+                                 appController.installedRepositoryInfoLoaded &&
+                                 appController.installedRepository.length > 0 &&
+                                 appController.installedBranch.length > 0
 
                         onClicked: {
                             if (dashboardRoot.commandRunning) {
@@ -268,57 +371,78 @@ ApplicationWindow {
             Row {
                     spacing: 10
 
-                Button {
+                AnimatedCommandButton {
                     text: "Status"
                     Accessible.name: "Status"
+                    running: dashboardRoot.activeCommandButton === "status"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("status", "qking")
+                    clickHandler: function () {
+                        dashboardRoot.runPreset("status", "qking", "status")
+                    }
                 }
 
-                Button {
+                AnimatedCommandButton {
                     text: "Restart"
                     Accessible.name: "Restart"
+                    running: dashboardRoot.activeCommandButton === "restart"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("restart", "restart")
+                    clickHandler: function() {
+                        dashboardRoot.runPreset("restart", "restart", "restart")
+                    }    
                 }
 
-                Button {
+                AnimatedCommandButton {
                     text: "Stop"
                     Accessible.name: "Stop"
+                    running: dashboardRoot.activeCommandButton === "stop"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("stop", "stop")
+                    clickHandler: function() {
+                        dashboardRoot.runPreset("stop", "stop", "stop")
+                    }
                 }
                 }
 
             Row {
                 spacing: 10
 
-                Button {
+                AnimatedCommandButton {
                     text: "Rebuild Database"
                     Accessible.name: "Rebuild Database"
+                    running: dashboardRoot.activeCommandButton === "rebuildDb"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("rebuildDb", "make reinstall Database")
+                    clickHandler: function() {
+                        dashboardRoot.runPreset("rebuildDb", "Datenbank wird rebuilded ...", "rebuildDb")
+                    }
                 }
 
-                Button {
+                AnimatedCommandButton {
                     text: "Reinstall Database"
                     Accessible.name: "Reinstall Database"
+                    running: dashboardRoot.activeCommandButton === "reinstallDb"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("reinstallDb", "make install Database")
+                    clickHandler: function() {
+                        dashboardRoot.runPreset("reinstallDb", "Datenbank wird reinstalliert ...", "reinstallDb")
+                    }
                 }
 
-                Button {
+                AnimatedCommandButton {
                     text: "Reinstall KiSoft"
                     Accessible.name: "Rebuild Database"
+                    running: dashboardRoot.activeCommandButton === "reinstallKiSoft"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("reinstallKiSoft", "make reinstall Database")
+                    clickHandler: function() {
+                        dashboardRoot.runPreset("reinstallKiSoft", "KiSoft wird reinstalliert ...", "reinstallKiSoft")
+                    }
                 }   
             
-                Button {
+                AnimatedCommandButton {
                     text: "Reinstall All"
                     Accessible.name: "Reinstall all"
+                    running: dashboardRoot.activeCommandButton === "reinstallAll"
                     enabled: !dashboardRoot.commandRunning
-                    onClicked: dashboardRoot.runPreset("reinstallAll", "make reinstall all")
+                    clickHandler: function () {
+                        dashboardRoot.runPreset("reinstallAll", "Alles wird reinstalliert", "reinstallAll")
+                    }
                 }
             }
 
@@ -355,8 +479,8 @@ ApplicationWindow {
                     font.family: "monospace"
 
                     onTextChanged: Qt.callLater(function() {
-                        const bar = commandOutputScroll.ScrollBar.vertical
-                        bar.position = Math.max(0, 1 - bar.size)
+                        const flickable = commandOutputScroll.contentItem
+                        flickable.contentY = Math.max(0, flickable.contentHeight - flickable.height)
                         })
                     }
                 }
@@ -406,28 +530,67 @@ ApplicationWindow {
 
                 function onCommandCompleted(standardOutput, standardError, exitStatus) {
                     dashboardRoot.commandRunning = false
-                    appendOutput(standardOutput + standardError)
 
                     if (exitStatus !== 0) {
                         commandError.text = "Befehl beendet mit Exit-Code " + exitStatus
                     } else {
                         commandError.text = ""
                     }
+
+                    dashboardRoot.activeCommandButton= ""
                 }
 
                 function onCommandFailed(message) {
                     dashboardRoot.commandRunning = false
                     commandError.text = message
                     dashboardRoot.appendOutput("\n[Fehler] " + message + "\n")
+                    dashboardRoot.activeCommandButton= ""
                 }
 
                 function onCommandCancelled() {
                     dashboardRoot.commandRunning = false
                     commandError.text = ""
                     dashboardRoot.appendOutput("\n[Befehl abgebrochen]\n")
+                    dashboardRoot.activeCommandButton= ""
                 }
 
                 function onCommandInputRequested(prompt, secret) {
+                    const lowerPrompt = prompt.toLowerCase()
+                    const askForUsername = lowerPrompt.includes("please provide your git remote username") ||
+                                           lowerPrompt.includes("username for 'https://")
+
+                    const askForPat =  lowerPrompt.includes("password for 'https://")
+                    const askForUpdateParameterTables = lowerPrompt.includes("execute prepared updates") &&
+                                                       lowerPrompt.includes("(y/n)?")
+                    
+                    if(askForUsername) {
+                        if (dashboardRoot.gitUsernameCache.length > 0) {
+                            appController.submitCommandInput(dashboardRoot.gitUsernameCache)
+                        } else {
+                        gitCredentialsDialog.prompt = prompt
+                        gitCredentialsDialog.requestedField = "username"
+                        gitCredentialsDialog.open()
+                       }
+                       return 
+                    }
+
+                    if (askForPat) {
+                        if (dashboardRoot.gitPatCache.length > 0) {
+                            appController.submitCommandInput(dashboardRoot.gitPatCache)
+                        } else {
+                    
+                            gitCredentialsDialog.prompt = prompt
+                            gitCredentialsDialog.requestedField = "pat"
+                            gitCredentialsDialog.open()
+                        }
+                        return
+                    }
+
+                    if (askForUpdateParameterTables) {
+                        appController.submitCommandInput("y");
+                        return;
+                    }
+
                     commandInputDialog.prompt = prompt
                     commandInputDialog.secret = secret
                     commandInputDialog.open()
@@ -475,7 +638,109 @@ ApplicationWindow {
                 appController.cancelCommand()
             }
             }
+        
+
+        Connections {
+        target: appController
+
+        function onRemoteBranchesLoaded(branches) {
+            dashboardRoot.commandRunning = false
+            selectRepo.loadingBranches = false;
+            selectBranchChoice.model = branches
+
+            if (selectRepo.visible) {
+                selectRepo.close()
+            }
+
+            selectBranchDialog.open()
         }
+
+        function onRemoteBranchesFailed(message) {
+            dashboardRoot.commandRunning = false
+
+            if (selectRepo.visible) {
+                selectRepo.loadingBranches = false
+                selectRepo.errorMessage = message
+            } else {
+            commandError.text = message
+            }
+            dashboardRoot.activeCommandButton= ""
+        }
+        
+        function onCommandOutputReceived(chunk) { 
+            dashboardRoot.appendOutput(chunk)
+        }
+    }  
+    Dialog {
+        id: gitCredentialsDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "Git-Zugangdaten"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        property string prompt: ""
+        property string requestedField: ""
+        property string errorMessage: ""
+        
+        contentItem: Column {
+            spacing: 8
+
+            Text {
+                text: gitCredentialsDialog.prompt
+                wrapMode: Text.Wrap
+            }
+            TextField {
+                id: gitUsernameField
+                width: 300
+                placeholderText: "Git-Username"
+            }
+
+            TextField {
+                id: gitPatField
+                width: 300
+                placeholderText: "Personal Access Token"
+                echoMode: TextInput.Password
+            }
+
+            Text {
+                text: gitCredentialsDialog.errorMessage
+                color: "red"
+                visible: text.length > 0
+            }
+        }
+                onAccepted: {
+                const username = gitUsernameField.text.trim()
+                const pat = gitPatField.text
+
+                if (username.length === 0 || pat.length === 0) {
+                    errorMessage = "Bitte Benutzername und PAT eingeben"
+                    Qt.callLater(function() {gitCredentialsDialog.open() })
+                    return
+                }
+
+                dashboardRoot.gitUsernameCache = username
+                dashboardRoot.gitPatCache = pat
+                
+                const answer = requestedField === "username" 
+                               ? username 
+                               : pat
+
+                appController.submitCommandInput(answer)
+
+                gitUsernameField.clear()
+                gitPatField.clear()
+                errorMessage = ""
+            }
+
+            onRejected: {
+                gitUsernameField.clear()
+                gitPatField.clear()
+                dashboardRoot.gitUsernameCache = ""
+                dashboardRoot.gitPatCache = ""
+                appController.cancelCommand()
+            }
+        } 
+     }
     }
 
     Popup {
@@ -605,33 +870,6 @@ ApplicationWindow {
                 wrapMode: Text.Wrap
             }
         }
-    }
-
-    Connections {
-        target: appController
-
-        function onRemoteBranchesLoaded(branches) {
-            dashboardRoot.commandRunning = false
-            selectRepo.loadingBranches = false;
-            selectBranchChoice.model = branches
-
-            if (selectRepo.visible) {
-                selectRepo.close()
-            }
-
-            selectBranchDialog.open()
-        }
-
-        function onRemoteBranchesFailed(message) {
-            dashboardRoot.commandRunning = false
-
-            if (selectRepo.visible) {
-                selectRepo.loadingBranches = false
-                selectRepo.errorMessage = message
-            } else {
-            commandError.text = message
-            }
-        }   
     }
     
     Dialog {

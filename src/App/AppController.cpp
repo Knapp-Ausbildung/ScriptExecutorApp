@@ -34,6 +34,7 @@ AppController::AppController(QObject *parent)
 
     if(success) {
       openDashboard();
+      loadInstalledRepositoryInfo();
     } else {
       openLogin();
       emit loginFailed();
@@ -71,14 +72,59 @@ AppController::AppController(QObject *parent)
 
       loadRemoteBranches(originUrl);
       return;
+    } 
+
+    if (exitStatus == 0 && standardOutput.trimmed() == QStringLiteral("__NO_INSTALLED_REPOSITORY__")) {
+      m_installedRepository.clear();
+      m_installedBranch.clear();
+      m_installedRepositoryInfoLoaded = true;
+      emit installedRepositoryChanged();
+      return;
+    }
+
+    if (m_loadingInstalledRepositoryInfo) {
+      m_loadingInstalledRepositoryInfo = false;
+
+      if (exitStatus == 0 &&
+          standardOutput.trimmed() ==
+              QStringLiteral("__NO_INSTALLED_REPOSITORY__")) {
+                m_installedRepository.clear();
+                m_installedBranch.clear();
+                m_installedRepositoryInfoLoaded = true;
+                emit installedRepositoryChanged();
+                return;
+      }
+
+      const int separator = standardOutput.indexOf('\t');
+      if (exitStatus != 0 || separator < 0) {
+        m_installedRepository.clear();
+        m_installedBranch.clear();
+        emit installedRepositoryChanged();
+        emit commandFailed(standardError.trimmed().isEmpty()
+                           ? QStringLiteral("Installiertes Repository konnte nicht gelesen werden")
+                           : standardError.trimmed());
+        return;
+      }
+
+      m_installedRepository = standardOutput.left(separator).trimmed();
+      m_installedBranch = standardOutput.mid(separator + 1).trimmed();
+      m_installedRepositoryInfoLoaded = true;
+      emit installedRepositoryChanged();
+      return;
     }
 
     if(!m_loadingRemoteBranches) {
       writeCommandLog(standardOutput, standardError, exitStatus);
       emit commandCompleted(standardOutput, standardError, exitStatus);
+      if (m_refreshInstalledRepositoryAfterCommand) {
+        m_refreshInstalledRepositoryAfterCommand = false;
+        if (exitStatus == 0) {
+          loadInstalledRepositoryInfo();
+        }
+      }
       return;
     }
-      
+    
     m_loadingRemoteBranches = false;
 
     if (exitStatus != 0) {
@@ -113,11 +159,20 @@ AppController::AppController(QObject *parent)
 
     m_availableBranches = branches;
     emit remoteBranchesLoaded(branches);
-    });
+  });
 
   connect(m_loginService, &LoginService::commandFailed, 
           this, [this](const QString &message) {
             
+
+      if (m_loadingInstalledRepositoryInfo) {
+        m_loadingInstalledRepositoryInfo = false;
+        m_refreshInstalledRepositoryAfterCommand = false;
+        emit commandFailed(message);
+        return;
+      }
+
+      m_refreshInstalledRepositoryAfterCommand = false;
 
       if (m_loadingInstalledRepositoryOrigin) {
         m_loadingInstalledRepositoryOrigin = false;
@@ -133,8 +188,19 @@ AppController::AppController(QObject *parent)
 
     emit commandFailed(message);
   });
+
   connect(m_loginService, &LoginService::commandCancelled,
           this, [this]() {
+
+    if (m_loadingInstalledRepositoryInfo) {
+        m_loadingInstalledRepositoryInfo = false;
+        m_refreshInstalledRepositoryAfterCommand = false;
+        emit commandCancelled();
+        return;
+    }
+
+    m_refreshInstalledRepositoryAfterCommand = false;
+
     if(m_loadingInstalledRepositoryOrigin) {
       m_loadingInstalledRepositoryOrigin = false;
       emit remoteBranchesFailed("Origin-Abfrage wurde abgebrochen");
@@ -152,6 +218,9 @@ AppController::AppController(QObject *parent)
 
   connect(m_loginService, &LoginService::commandInputRequested,
           this, &AppController::commandInputRequested);
+  
+  connect(m_loginService, &LoginService::commandOutputReceived,
+          this, &AppController::commandOutputReceived);
 }
 
 // Getter
@@ -161,6 +230,18 @@ bool AppController::isLoggedIn() const {
 
 QString AppController::getCurrentScreen() const { 
   return m_currentScreen; 
+}
+
+QString AppController::installedRepository() const {
+  return m_installedRepository;
+}
+
+QString AppController::installedBranch() const {
+  return m_installedBranch;
+}
+
+bool AppController::installedRepositoryInfoLoaded() const {
+  return m_installedRepositoryInfoLoaded;
 }
 
 void AppController::attemptLogin(const QString &ipAdress,
@@ -332,22 +413,26 @@ bool AppController::sendRepoLink(const QString &repoLink) {
   }
 
   void AppController::fetchSelectedBranch() {
-    if (m_selectedRepoUrl.isEmpty() ||
-        m_selectedBranch.isEmpty()) {
+    if (!m_installedRepositoryInfoLoaded ||
+        m_installedRepository.isEmpty() ||
+        m_installedBranch.isEmpty()) {
           emit commandFailed("Bitte erst Repository und Branch auswählen");
           return;
         }
     
-        m_loginService->fetchRemoteBranch(m_selectedRepoUrl, m_selectedBranch);
+        m_loginService->fetchRemoteBranch(m_installedRepository, m_installedBranch);
   }
 
   void AppController::pullSelectedBranch() {
-    if (m_selectedRepoUrl.isEmpty() || m_selectedBranch.isEmpty()) {
+    if (!m_installedRepositoryInfoLoaded || 
+        m_installedRepository.isEmpty() ||
+        m_installedBranch.isEmpty()) {
       emit commandFailed("Bitte erst Repository und Branch auswählen");
       return;
     }
 
-    m_loginService->pullRemoteBranch(m_selectedRepoUrl, m_selectedBranch);
+    m_refreshInstalledRepositoryAfterCommand = true;
+    m_loginService->pullRemoteBranch(m_installedRepository, m_installedBranch);
   }
 
   void AppController::replaceSelectedRepository() {
@@ -356,12 +441,13 @@ bool AppController::sendRepoLink(const QString &repoLink) {
       return;
     }
 
+    m_refreshInstalledRepositoryAfterCommand = true;
     m_loginService->replaceRepository(m_selectedRepoUrl, m_selectedBranch);
   }
 
   void AppController::loadInstalledRepositoryBranches() {
 
-    if(m_selectedRepoUrl.isEmpty()) {
+    if(!m_installedRepositoryInfoLoaded || m_installedRepository.isEmpty()) {
       emit remoteBranchesFailed(QStringLiteral("Bitte erst Repository auswählen!"));
       return;
     }
@@ -371,7 +457,15 @@ bool AppController::sendRepoLink(const QString &repoLink) {
       return;
     }
 
-    m_loadingInstalledRepositoryOrigin = true;
-    m_loginService->loadInstalledRepositoryOrigin();
+    loadRemoteBranches(m_installedRepository);
   }
 
+  void AppController::loadInstalledRepositoryInfo() {
+    if (m_loadingInstalledRepositoryInfo) {
+      return;
+    }
+
+    m_installedRepositoryInfoLoaded = false;
+    m_loadingInstalledRepositoryInfo = true;
+    m_loginService->loadInstalledRepositoryInfo();
+  }

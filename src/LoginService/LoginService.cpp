@@ -53,6 +53,9 @@ LoginService::LoginService(QObject *parent)
   connect(this, &LoginService::installedRepositoryOriginRequested,
           m_worker, &SshWorker::loadInstalledRepositoryOrigin,
           Qt::QueuedConnection);
+  connect(this, &LoginService::installedRepositoryInfoRequested,
+          m_worker, &SshWorker::loadInstalledRepositoryInfo,
+          Qt::QueuedConnection);        
 
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
   connect(m_worker, &SshWorker::hostKeyConfirmationRequested,
@@ -67,18 +70,24 @@ LoginService::LoginService(QObject *parent)
           m_loggedIn = false;
     emit loggedOut();
   });
+  
   connect(m_worker, &SshWorker::commandCompleted,
           this, &LoginService::commandCompleted);  
   connect(m_worker, &SshWorker::commandCancelled,
           this, &LoginService::commandCancelled);
   connect(m_worker, &SshWorker::commandFailed,
           this, &LoginService::commandFailed);
+  connect(m_worker, &SshWorker::commandOutputReceived,
+          this, &LoginService::commandOutputReceived);
+          
   // Connection für Abfrage der Passwortaufforderung, wenn benötigt       
   connect(m_worker, &SshWorker::commandInputRequested,
           this, &LoginService::commandInputRequested);
   connect(this, &LoginService::commandInputSubmitted,
           m_worker, &SshWorker::submitCommandInput,
           Qt::DirectConnection);
+
+
 
   connect(this, &LoginService::fetchRemoteBranchRequested,
           m_worker, &SshWorker::fetchRemoteBranch,
@@ -161,6 +170,12 @@ void LoginService::loadInstalledRepositoryOrigin() {
   
   emit prepareCommandRequested();
   emit installedRepositoryOriginRequested();
+}
+
+void LoginService::loadInstalledRepositoryInfo() {
+
+  emit prepareCommandRequested();
+  emit installedRepositoryInfoRequested();
 }
 
 LoginService::~LoginService() {

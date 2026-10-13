@@ -42,6 +42,7 @@ public slots:
                            const QString &branch);
 
     void loadInstalledRepositoryOrigin();
+    void loadInstalledRepositoryInfo();
 
 signals:
     void hostKeyConfirmationRequested(const QString &host,
@@ -55,6 +56,7 @@ signals:
     void commandCancelled();
     void commandFailed(const QString &message);
     void commandInputRequested(const QString &prompt, bool secret);
+    void commandOutputReceived(const QString &chunk);
 
 private:
     bool authenticatePendingLogin();

@@ -26,6 +26,16 @@ class AppController : public QObject {
   // Wir verbinden praktisch QML über diese property mit dem LoginService
   Q_PROPERTY(bool loggedIn READ isLoggedIn NOTIFY loggedInChanged)
 
+  Q_PROPERTY(QString installedRepository
+             READ installedRepository
+             NOTIFY installedRepositoryChanged)
+  Q_PROPERTY(QString installedBranch
+             READ installedBranch
+             NOTIFY installedRepositoryChanged)
+  Q_PROPERTY(bool installedRepositoryInfoLoaded
+             READ installedRepositoryInfoLoaded
+             NOTIFY installedRepositoryChanged)
+
 public:
   // parent ist optional, aber in Qt üblich.
   explicit AppController(QObject *parent = nullptr);
@@ -35,6 +45,10 @@ public:
   QString getCurrentScreen() const;
 
   bool isLoggedIn() const;
+
+  QString installedRepository() const;
+  QString installedBranch() const;
+  bool installedRepositoryInfoLoaded() const;
 
 public slots: // public slots sind für QML aufrufbar.
 
@@ -70,6 +84,9 @@ public slots: // public slots sind für QML aufrufbar.
   void replaceSelectedRepository();
   void loadInstalledRepositoryBranches();
 
+  void loadInstalledRepositoryInfo();
+
+
 signals:
   // Diese Signale werden emittiert, wenn sich der Zustand ändert.
   // QML kann darauf reagieren und UI neu rendern.
@@ -88,9 +105,11 @@ signals:
   void commandCancelled();
   void commandFailed(const QString &message);
   void commandInputRequested(const QString &prompt, bool secret);
+  void commandOutputReceived(const QString &chunk);
 
   void remoteBranchesLoaded(const QStringList &branches);
   void remoteBranchesFailed(const QString &message);
+  void installedRepositoryChanged();
 
 private:
   LoginService *m_loginService;
@@ -111,5 +130,10 @@ private:
   bool m_loadingInstalledRepositoryOrigin = false;
   QStringList m_availableBranches;
   QString m_selectedBranch;
+  QString m_installedRepository;
+  QString m_installedBranch;
+  bool m_loadingInstalledRepositoryInfo = false;
+  bool m_refreshInstalledRepositoryAfterCommand = false;
+  bool m_installedRepositoryInfoLoaded = false;
 
 };

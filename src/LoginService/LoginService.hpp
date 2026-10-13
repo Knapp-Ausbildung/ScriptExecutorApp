@@ -44,6 +44,7 @@ signals:
   void executePresetCommandRequested(const QString &commandId);
   void commandInputRequested(const QString &prompt, bool secret);
   void commandInputSubmitted(const QString &input);
+  void commandOutputReceived(const QString &chunk);
 
   void remoteBranchesRequested(const QString &url);
   void remoteBranchesFailed(const QString &message);
@@ -54,6 +55,7 @@ signals:
   void replaceRepositoryRequested(const QString &url,
                                   const QString &branch);
   void installedRepositoryOriginRequested();
+  void installedRepositoryInfoRequested();
 
 public slots:
   void login(const QString &host, 
@@ -76,6 +78,8 @@ public slots:
   void replaceRepository(const QString &url,
                          const QString &branch);
   void loadInstalledRepositoryOrigin();
+  void loadInstalledRepositoryInfo();
+  
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;

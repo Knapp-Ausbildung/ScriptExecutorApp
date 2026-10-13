@@ -475,6 +475,8 @@ void SshWorker::executeCommandInternal(const QString &command,
             stdoutData.append(buffer, stdoutCount);
             promptBuffer.append(buffer, stdoutCount);
             receivedData = true;
+
+            emit commandOutputReceived(QString::fromUtf8(buffer, stdoutCount));
         }
 
         const int stderrCount = ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 1);
@@ -499,6 +501,8 @@ void SshWorker::executeCommandInternal(const QString &command,
             stderrData.append(buffer, stderrCount);
             promptBuffer.append(buffer, stderrCount);
             receivedData = true;
+
+            emit commandOutputReceived(QString::fromUtf8(buffer, stderrCount));
         }
 
         constexpr qsizetype maxPromptBytes = 256;
@@ -512,11 +516,26 @@ void SshWorker::executeCommandInternal(const QString &command,
         static const QRegularExpression ansiSgr(R"(\x1B\[[0-9;]*m)");
         promptText.remove(ansiSgr);
 
-        static const QRegularExpression passwordPrompt(R"((password|passphrase|passcode)[^\r\n]{0,80}[:?]\s*$)",
-                                                       QRegularExpression::CaseInsensitiveOption);
-        if(!waitingForInput && passwordPrompt.match(promptText).hasMatch()) {
+        static const QRegularExpression helperUsernamePrompt(R"re(please provide your git remote username[\s\S]*username:\s*$)re",
+                                                             QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression httpsUsernamePrompt(R"re(username for 'https?://[^']+':\s*$)re",
+                                                          QRegularExpression::CaseInsensitiveOption);        
+        static const QRegularExpression gitPasswordPrompt(R"(password for 'https?://[^']+':\s*$)", 
+                                                          QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression otherPasswordPrompt(R"((password|passphrase|passcode)[^\r\n]{0,80}[:?]\s*$)",
+                                                            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression confirmationPrompt(R"re(execute prepared updates\s*\(y/n\)\?:?\s*$)re",
+                                                           QRegularExpression::CaseInsensitiveOption);
+        
+        const bool askForGitUsername = helperUsernamePrompt.match(promptText).hasMatch() ||
+                                       httpsUsernamePrompt.match(promptText).hasMatch();
+        const bool askForGitPassword = gitPasswordPrompt.match(promptText).hasMatch();
+        const bool askForOtherPassword = !askForGitPassword && otherPasswordPrompt.match(promptText).hasMatch();
+        const bool askForConfirmation = confirmationPrompt.match(promptText).hasMatch();
+
+        if(!waitingForInput && (askForGitUsername || askForGitPassword || askForOtherPassword || askForConfirmation)) {
           waitingForInput = true;
-          emit commandInputRequested(promptText.trimmed(), true);
+          emit commandInputRequested(promptText.trimmed(), !askForGitUsername);
         }
 
         QByteArray response;
@@ -621,15 +640,22 @@ void SshWorker::executePresetCommand(const QString &commandId)
 
         command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make reinstall'";
     } else if (commandId == "reinstallDb") {
-
-        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && yes y | make install'";
+        
+        requestPty = true;
+        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && yes y | make install && "
+                  "cd \"$WCS_ROOT\" && updateParameterTables'";
     } else if (commandId == "reinstallKiSoft") {
+       
+        requestPty = true;
+        command = "bash -lc 'cd \"$WCS_ROOT/\" && make release && "
+                  "cd \"$WCS_ROOT\" && updateParameterTables'";
 
-        command = "bash -lc 'cd \"$WCS_ROOT/\" && make release'";
     } else if (commandId == "reinstallAll") {
         
         requestPty = true;
-        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && cd \"$KX_SRC_ROOT/afgui\" && yes y | make uninstall  && sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop nginx-kisoft-one.service && cd \"$WCS_ROOT/../test/tool\" && ./KXrelease.sh'";
+        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && cd \"$KX_SRC_ROOT/afgui\" && " 
+                  "yes y | make uninstall  && sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop nginx-kisoft-one.service && "
+                  "cd \"$WCS_ROOT/../test/tool\" && ./KXrelease.sh'";
     }
     
     else {
@@ -668,7 +694,7 @@ void SshWorker::loadRemoteBranches(const QString &urlText) {
     const QString command = "git ls-remote --heads " + 
                             quoteShellArgument(normalizedUrl);
                           
-    executeCommandInternal(command, false);
+    executeCommandInternal(command, true);
 }
 
 void SshWorker::fetchRemoteBranch(const QString &urlText,
@@ -684,14 +710,14 @@ void SshWorker::fetchRemoteBranch(const QString &urlText,
   return;
   } 
 
-  const QString repoPath = QStringLiteral("/kisoft/user/testing");
+  const QString repoPath = QStringLiteral("/kisoft/user/klassx");
   const QString refspec = QStringLiteral("refs/heads/") + normalizedBranch;
 
   const QString command = "git -C " + quoteShellArgument(repoPath) +
                           " fetch -- " + quoteShellArgument(normalizedUrl) 
                           + " " + quoteShellArgument(refspec);
 
-  executeCommandInternal(command, false);
+  executeCommandInternal(command, true);
 }
 
 void SshWorker::pullRemoteBranch(const QString &urlText,
@@ -709,7 +735,7 @@ void SshWorker::pullRemoteBranch(const QString &urlText,
   }                               
 
 const QString repoArg =
-    quoteShellArgument(QStringLiteral("/kisoft/user/testing"));
+    quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
 const QString urlArg =
     quoteShellArgument(normalizedUrl);
 const QString branchArg = quoteShellArgument(normalizedBranch);
@@ -741,7 +767,7 @@ const QString command =
     "git -C " + repoArg + " switch --create " + branchArg + " " + trackingRefArg + "; "
     "fi";
 
-  executeCommandInternal(command, false);
+  executeCommandInternal(command, true);
 }
 
 void SshWorker::replaceRepository(const QString &url, 
@@ -760,10 +786,10 @@ void SshWorker::replaceRepository(const QString &url,
   // Zuerst in ein temporäres Nachbarsverzeichnis geklont, aktuelles Verzeichnis wird umbennant
   // Neues Verzeichnis wird erstellt und dort hineingecloned, wenn alles funktioniert hat
   // wird altes Verzeichnis gelöscht 
-  const QString targetPath = QStringLiteral("/kisoft/user/testing");
+  const QString targetPath = QStringLiteral("/kisoft/user/klassx");
   const QString targetArg = quoteShellArgument(targetPath);
   const QString stagingPattern =
-      quoteShellArgument(QStringLiteral("/kisoft/user/.testing-stage.XXXXXX"));
+      quoteShellArgument(QStringLiteral("/kisoft/user/.klassx-stage.XXXXXX"));
   const QString branchArg = quoteShellArgument(normalizedBranch);
   const QString urlArg = quoteShellArgument(normalizedUrl);
 
@@ -806,7 +832,7 @@ void SshWorker::replaceRepository(const QString &url,
                      "echo 'Could not install the new repository' >&2; exit 10; "
                      "fi");
 
-  executeCommandInternal(command, false);
+  executeCommandInternal(command, true);
 }
 
 void SshWorker::loadInstalledRepositoryOrigin() {
@@ -815,11 +841,32 @@ void SshWorker::loadInstalledRepositoryOrigin() {
     return;
   }
 
-  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/testing"));
+  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
   const QString command = "git -C " + repoArg +
                           " rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
                           "{ echo 'Configured path is not a Git repository' >&2; exit 2; }; "
                           "git -C " + repoArg + " remote get-url origin";
 
+  executeCommandInternal(command, false);
+}
+
+void SshWorker::loadInstalledRepositoryInfo() {
+  if (m_session == nullptr || !m_connected || !m_loggedIn) {
+
+    emit commandFailed("No authenticated SSH connection");
+    return;
+  }
+
+  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
+
+  const QString command = 
+                        "if ! git -C " + repoArg +
+                        " rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+                        "printf '%s\\n' '__NO_INSTALLED_REPOSITORY__'; exit 0; fi; "
+                        "origin=$(git -C " + repoArg + " remote get-url origin) || exit; "
+                        "branch=$(git -C " + repoArg + " branch --show-current) || exit; "
+                        "if [ -z \"$branch\" ]; then branch='(detached HEAD)'; fi; "
+                        "printf '%s\\t%s\\n' \"$origin\" \"$branch\"";
+  
   executeCommandInternal(command, false);
 }
