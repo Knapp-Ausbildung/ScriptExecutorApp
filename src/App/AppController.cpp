@@ -220,9 +220,14 @@ AppController::AppController(QObject *parent)
           this, &AppController::commandInputRequested);
   
   connect(m_loginService, &LoginService::commandOutputReceived,
-          this, &AppController::commandOutputReceived);
+          this, [this](const QString &chunk) {
+            if(m_loadingInstalledRepositoryInfo) {
+              return;
+            }
+            
+            emit commandOutputReceived(chunk);
+  });
 }
-
 // Getter
 bool AppController::isLoggedIn() const { 
   return m_loginService->getLoggedIn(); 

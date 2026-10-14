@@ -81,9 +81,12 @@ ApplicationWindow {
         id: loginPage
 
         Rectangle {
+            id: loginRoot
             color: "#f2f2f2"
 
-           
+            function performLogin() {
+                appController.attemptLogin(ipAddressField.text, userNameField.text, passwordField.text)
+            }
 
             Column {
                 anchors.centerIn: parent
@@ -100,6 +103,7 @@ ApplicationWindow {
                     placeholderText: "IP Adresse"
                     Accessible.name: "IP Adresse"
                     width: 220
+                    onAccepted: userNameField.forceActiveFocus()
                 }
 
                 TextField {
@@ -107,6 +111,7 @@ ApplicationWindow {
                     placeholderText: "Username"
                     Accessible.name: "Username"
                     width: 220
+                    onAccepted: passwordField.forceActiveFocus()
                 }
                 TextField {
                     id: passwordField
@@ -114,8 +119,8 @@ ApplicationWindow {
                     Accessible.name: "Passwort"
                     echoMode: TextInput.Password
                     width: 220
+                    onAccepted: loginRoot.performLogin()
                 }
-
 
                 Button {
                     text: "Einloggen"
@@ -124,7 +129,7 @@ ApplicationWindow {
 
                     onClicked: {
                         // Aufruf der C++-Methode
-                        appController.attemptLogin(ipAddressField.text, userNameField.text, passwordField.text)
+                        loginRoot.performLogin()
                     }
                 }
             }
@@ -236,6 +241,13 @@ ApplicationWindow {
                 dashboardRoot.appendOutput("$ " + displayCommand + "\n")
                 appController.executePresetCommand(commandId)
             }
+
+            function repositoryDisplayName(remoteUrl) {
+                const parts = String(remoteUrl).split("/_git/")
+                const lastPart = parts[parts.length - 1].split(/[?#]/)[0]
+                return decodeURIComponent(lastPart.replace(/\/+$/, "").replace(/\.git$/i, ""))
+            }
+
             ColumnLayout {
                 anchors.fill: parent
                 anchors.top: parent.top
@@ -266,9 +278,9 @@ ApplicationWindow {
                 Text {
                     visible: appController.installedRepositoryInfoLoaded &&
                              appController.installedRepository.length > 0
-                    text: "Aktuell geladenes Repository: " + appController.installedRepository
+                    text: "Aktuell geladenes Repository: " + dashboardRoot.repositoryDisplayName(appController.installedRepository)
                 }
-
+                
                 Text {
                     visible: appController.installedRepositoryInfoLoaded &&
                              appController.installedRepository.length > 0 
@@ -625,6 +637,7 @@ ApplicationWindow {
                     echoMode: commandInputDialog.secret 
                               ? TextInput.Password 
                               : TextInput.Normal
+                    onAccepted: commandInputDialog.accept()
                 }
             
 
@@ -693,6 +706,7 @@ ApplicationWindow {
                 id: gitUsernameField
                 width: 300
                 placeholderText: "Git-Username"
+                onAccepted: gitPatField.forceActiveFocus()
             }
 
             TextField {
@@ -700,6 +714,7 @@ ApplicationWindow {
                 width: 300
                 placeholderText: "Personal Access Token"
                 echoMode: TextInput.Password
+                onAccepted: gitCredentialsDialog.accept()
             }
 
             Text {
@@ -828,6 +843,19 @@ ApplicationWindow {
         property string errorMessage: ""
         property bool loadingBranches: false
 
+        function loadBranches() {
+            console.log("Repository bestätigt: ", repoURL.text)
+            selectRepo.errorMessage = ""
+
+            if (appController.sendRepoLink(repoURL.text)) {
+                selectRepo.errorMessage = ""
+                selectRepo.loadingBranches = true
+                appController.loadRemoteBranches(repoURL.text)
+            } else {
+                selectRepo.errorMessage = "Bitte einen gültigen Repository-Link einfügen!"
+            }
+        }
+
         contentItem: Column {
             spacing: 8
 
@@ -841,6 +869,7 @@ ApplicationWindow {
                 width: 400
                 id: repoURL
                 placeholderText: "Link hier einfügen!"
+                onAccepted: selectRepo.loadBranches()
             }
             Button {
                 enabled: !selectRepo.loadingBranches
@@ -848,17 +877,7 @@ ApplicationWindow {
                       ? "Branches werden geladen ..." 
                       : "Branches laden"
 
-                onClicked: {
-                    console.log("Repository bestätigt: ", repoURL.text)
-                    selectRepo.errorMessage = ""
-
-                    if (appController.sendRepoLink(repoURL.text)) {
-                        selectRepo.errorMessage = ""
-                        selectRepo.loadingBranches = true
-                        appController.loadRemoteBranches(repoURL.text)
-                    } else {
-                        selectRepo.errorMessage = "Bitte einen gültigen Repository-Link einfügen!"
-                    }
+                onClicked: { selectRepo.loadBranches()
                 }
             }
         
