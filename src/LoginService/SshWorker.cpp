@@ -7,10 +7,15 @@
 #include <QMutexLocker>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QFileInfo>
+#include <QDir>
 
 #include <cstddef>
 
 namespace {
+
+// Set Repo Work Directory
+const QString kRepoPath = QStringLiteral("/kisoft/build/KiSoft-One/wcs");
 
 QString quoteShellArgument(const QString &argument) {
     QString quoted = argument;
@@ -710,7 +715,7 @@ void SshWorker::fetchRemoteBranch(const QString &urlText,
   return;
   } 
 
-  const QString repoPath = QStringLiteral("/kisoft/user/klassx");
+  const QString repoPath = kRepoPath;
   const QString refspec = QStringLiteral("refs/heads/") + normalizedBranch;
 
   const QString command = "git -C " + quoteShellArgument(repoPath) +
@@ -734,8 +739,7 @@ void SshWorker::pullRemoteBranch(const QString &urlText,
   return;
   }                               
 
-const QString repoArg =
-    quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
+const QString repoArg = kRepoPath;
 const QString urlArg =
     quoteShellArgument(normalizedUrl);
 const QString branchArg = quoteShellArgument(normalizedBranch);
@@ -786,10 +790,14 @@ void SshWorker::replaceRepository(const QString &url,
   // Zuerst in ein temporäres Nachbarsverzeichnis geklont, aktuelles Verzeichnis wird umbennant
   // Neues Verzeichnis wird erstellt und dort hineingecloned, wenn alles funktioniert hat
   // wird altes Verzeichnis gelöscht 
-  const QString targetPath = QStringLiteral("/kisoft/user/klassx");
+  const QString targetPath = kRepoPath;
   const QString targetArg = quoteShellArgument(targetPath);
+
+  const QFileInfo targetInfo(targetPath);
+  const QString stagingPath = targetInfo.dir().filePath("." + targetInfo.fileName() + "-stage.XXXXXX");
+
   const QString stagingPattern =
-      quoteShellArgument(QStringLiteral("/kisoft/user/.klassx-stage.XXXXXX"));
+      quoteShellArgument(stagingPath);
   const QString branchArg = quoteShellArgument(normalizedBranch);
   const QString urlArg = quoteShellArgument(normalizedUrl);
 
@@ -841,7 +849,7 @@ void SshWorker::loadInstalledRepositoryOrigin() {
     return;
   }
 
-  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
+  const QString repoArg = quoteShellArgument(kRepoPath);
   const QString command = "git -C " + repoArg +
                           " rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
                           "{ echo 'Configured path is not a Git repository' >&2; exit 2; }; "
@@ -857,7 +865,7 @@ void SshWorker::loadInstalledRepositoryInfo() {
     return;
   }
 
-  const QString repoArg = quoteShellArgument(QStringLiteral("/kisoft/user/klassx"));
+  const QString repoArg = kRepoPath;
 
   const QString command = 
                         "if ! git -C " + repoArg +
