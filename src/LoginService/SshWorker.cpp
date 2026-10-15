@@ -9,50 +9,98 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
+#include <QSet>
+#include <QStringList>
+
 
 #include <cstddef>
 
 namespace {
 
-// Set Repo Work Directory
-const QString kRepoPath = QStringLiteral("/kisoft/build/KiSoft-One/wcs");
+  // Set Repo Work Directory
+  const QString kRemoteBuildRoot = QStringLiteral("/kisoft/build/");
 
-QString quoteShellArgument(const QString &argument) {
-    QString quoted = argument;
-    quoted.replace("'", "'\\''");
-    return "'" + quoted + "'";
-}
+  QString quoteShellArgument(const QString &argument) {
+      QString quoted = argument;
+      quoted.replace("'", "'\\''");
+      return "'" + quoted + "'";
+  }
 
-bool getServerFingerprint(ssh_session session, QString &fingerprint) {
-    ssh_key serverKey = nullptr;
+  bool getServerFingerprint(ssh_session session, QString &fingerprint) {
+      ssh_key serverKey = nullptr;
 
-    if (ssh_get_server_publickey(session, &serverKey) != SSH_OK) {
-      return false;
-    }
+      if (ssh_get_server_publickey(session, &serverKey) != SSH_OK) {
+        return false;
+      }
 
-    unsigned char *hash = nullptr;
-    size_t hashLength = 0;
+      unsigned char *hash = nullptr;
+      size_t hashLength = 0;
 
-    if(ssh_get_publickey_hash(serverKey, SSH_PUBLICKEY_HASH_SHA256, 
-                              &hash, &hashLength) != SSH_OK) {
-      
+      if(ssh_get_publickey_hash(serverKey, SSH_PUBLICKEY_HASH_SHA256, 
+                                &hash, &hashLength) != SSH_OK) {
+        
+        ssh_key_free(serverKey);
+        return false;
+      }
+
+      char *fingerprintText = 
+        ssh_get_fingerprint_hash(SSH_PUBLICKEY_HASH_SHA256, hash, hashLength);
+
+      ssh_clean_pubkey_hash(&hash);
       ssh_key_free(serverKey);
-      return false;
+
+      if (fingerprintText == nullptr) {
+        return false;
+      }
+
+      fingerprint = QString::fromLatin1(fingerprintText);
+      ssh_string_free_char(fingerprintText);
+      return true;
     }
 
-    char *fingerprintText = 
-      ssh_get_fingerprint_hash(SSH_PUBLICKEY_HASH_SHA256, hash, hashLength);
+  QString repositoryPathForType(const QString &type)
+  {
+    static const QSet<QString> allowedTypes {
+      QStringLiteral("SRC"),
+      QStringLiteral("SandBox"),
+      QStringLiteral("KiSoft-One")
+    };
 
-    ssh_clean_pubkey_hash(&hash);
-    ssh_key_free(serverKey);
-
-    if (fingerprintText == nullptr) {
-      return false;
+    if (!allowedTypes.contains(type)) {
+      return {};
     }
 
-    fingerprint = QString::fromLatin1(fingerprintText);
-    ssh_string_free_char(fingerprintText);
-    return true;
+    return QDir(kRemoteBuildRoot).filePath(type); 
+  }
+
+  bool repositoryTypeAndPrefixFromUrl(const QString &urlText,
+                                      QString &type,
+                                      QString &customerPrefix) {
+    const QUrl url(urlText);
+    const QString name = url.path(QUrl::FullyDecoded).section('/', -1);
+
+    static const QStringList allowedTypes{
+      QStringLiteral("KiSoft-One"),
+      QStringLiteral("SandBox"),
+      QStringLiteral("SRC")
+    };
+
+    for (const QString &candidate : allowedTypes) {
+      if ( name == candidate) {
+          type = candidate;
+          customerPrefix.clear();
+          return true;
+      }
+
+      const QString suffix = QStringLiteral("-") + candidate;
+      if (name.endsWith(suffix)) {
+        type = candidate;
+        customerPrefix = name.left(name.size() - suffix.size());
+        return !customerPrefix.isEmpty();
+      }
+    }
+
+    return false;
   }
 }
 
@@ -689,8 +737,11 @@ void SshWorker::loadRemoteBranches(const QString &urlText) {
   
   QString normalizedUrl;
   QString error;
+  QUrl origin(urlText);
+  origin.setUserInfo(QString());
+  const QString cleanOrigin = origin.toString(QUrl::FullyEncoded);
   
-  if (!validateGitRequest(urlText,  
+  if (!validateGitRequest(cleanOrigin,  
                           normalizedUrl, error)) {
   
     emit commandFailed(error);
@@ -715,10 +766,28 @@ void SshWorker::fetchRemoteBranch(const QString &urlText,
   return;
   } 
 
-  const QString repoPath = kRepoPath;
+  QString repoType;
+  QString customerPrefix;
+
+  if (!repositoryTypeAndPrefixFromUrl(normalizedUrl, repoType, customerPrefix)) {
+    emit commandFailed("Repository name is not allowed");
+    return;
+  }
+
+  if (m_activeRepositoryType.isEmpty()) {
+    emit commandFailed("Bitte erst ein Repository auswählen");
+    return;
+  }
+
+  if (repoType != m_activeRepositoryType) {
+    emit commandFailed("Die Repository-URL stimmt nicht mit der aktiven Auswahl überein");
+    return;
+  }
+
+  const QString targetPath = repositoryPathForType(m_activeRepositoryType);
   const QString refspec = QStringLiteral("refs/heads/") + normalizedBranch;
 
-  const QString command = "git -C " + quoteShellArgument(repoPath) +
+  const QString command = "git -C " + quoteShellArgument(targetPath) +
                           " fetch -- " + quoteShellArgument(normalizedUrl) 
                           + " " + quoteShellArgument(refspec);
 
@@ -737,9 +806,26 @@ void SshWorker::pullRemoteBranch(const QString &urlText,
   
     emit commandFailed(error);
   return;
-  }                               
+  }                    
+  
+  QString repoType;
+  QString customerPrefix;
 
-const QString repoArg = kRepoPath;
+if (!repositoryTypeAndPrefixFromUrl(normalizedUrl, repoType, customerPrefix)) {
+  emit commandFailed("Repository name is not allowed");
+  return;
+}
+if (m_activeRepositoryType.isEmpty()) {
+  emit commandFailed("Bitte erst ein Repository auswählen");
+  return;
+}
+
+if (repoType != m_activeRepositoryType) {
+  emit commandFailed("Die Repository-URL stimmt nicht mit der aktiven Auswahl überein");
+  return;
+}
+
+const QString repoArg = quoteShellArgument(repositoryPathForType(m_activeRepositoryType));
 const QString urlArg =
     quoteShellArgument(normalizedUrl);
 const QString branchArg = quoteShellArgument(normalizedBranch);
@@ -787,11 +873,21 @@ void SshWorker::replaceRepository(const QString &url,
   return;
   }
 
+  QString repoType;
+  QString customerPrefix;
+
+  if (!repositoryTypeAndPrefixFromUrl(normalizedUrl, repoType, customerPrefix)) {
+    emit commandFailed("Repository name is not allowed");
+    return;
+  }
+
   // Zuerst in ein temporäres Nachbarsverzeichnis geklont, aktuelles Verzeichnis wird umbennant
   // Neues Verzeichnis wird erstellt und dort hineingecloned, wenn alles funktioniert hat
   // wird altes Verzeichnis gelöscht 
-  const QString targetPath = kRepoPath;
+  const QString targetPath = repositoryPathForType(repoType);
   const QString targetArg = quoteShellArgument(targetPath);
+
+  const QString encodedCustomerPrefix = QString::fromLatin1(QUrl::toPercentEncoding(customerPrefix));
 
   const QFileInfo targetInfo(targetPath);
   const QString stagingPath = targetInfo.dir().filePath("." + targetInfo.fileName() + "-stage.XXXXXX");
@@ -801,13 +897,16 @@ void SshWorker::replaceRepository(const QString &url,
   const QString branchArg = quoteShellArgument(normalizedBranch);
   const QString urlArg = quoteShellArgument(normalizedUrl);
 
-  const QString command =
+  QString command =
       QStringLiteral("set -eu; target=") + targetArg +
       QStringLiteral("; "
                      "if [ -L \"$target\" ]; then "
                      "echo 'Target path must not be a symlink' >&2; exit 2; fi; "
                      "if [ -e \"$target\" ] && [ ! -d \"$target\" ]; then "
                      "echo 'Target path exists but is not a directory' >&2; exit 3; fi; "
+                     "parent=${target%/*}; "
+                     "mkdir -p -- \"$parent\" || "
+                     "{ echo 'Could not create target parent directory' >&2; exit 11; }; "
                      "stage=$(mktemp -d ") + stagingPattern +
       QStringLiteral(") || exit 4; "
                      "if ! git clone --single-branch --branch ") + branchArg +
@@ -826,11 +925,11 @@ void SshWorker::replaceRepository(const QString &url,
                      "{ rm -rf -- \"$stage\"; exit 7; }; "
                      "had_old=1; fi; "
                      "if mv -- \"$stage\" \"$target\"; then "
+                     "printf '%s\\n' '__REPOSITORY_INSTALL_SUCCEEDED__'; "
                      "if [ \"$had_old\" -eq 1 ]; then "
                      "rm -rf -- \"$old\" || "
                      "{ echo 'New repository installed, but old directory remains' >&2; exit 8; }; "
                      "fi; "
-                     "echo 'Repository replaced successfully'; "
                      "else "
                      "if [ \"$had_old\" -eq 1 ]; then "
                      "mv -- \"$old\" \"$target\" || "
@@ -839,6 +938,55 @@ void SshWorker::replaceRepository(const QString &url,
                      "rm -rf -- \"$stage\"; "
                      "echo 'Could not install the new repository' >&2; exit 10; "
                      "fi");
+  
+    const QString cleanupCommand =
+      "; new_prefix=" + quoteShellArgument(encodedCustomerPrefix) +
+      "; new_type=" + quoteShellArgument(repoType) +
+      "; "
+      "repo_prefix() { "
+      "origin=$(git -C \"$1\" remote get-url origin) || return 1; "
+      "name=${origin##*/}; "
+      "name=${name%.git}; "
+      "suffix=\"-$2\"; "
+      "case \"$name\" in "
+      "*\"$suffix\") prefix=${name%\"$suffix\"} ;; "
+      "*) return 1 ;; "
+      "esac; "
+      "[ -n \"$prefix\" ] || return 1; "
+      "printf '%s' \"$prefix\"; "
+      "}; "
+      "mismatched=''; "
+      "if [ -n \"$new_prefix\" ]; then "
+      "for other_type in SRC SandBox KiSoft-One; do "
+      "[ \"$other_type\" = \"$new_type\" ] && continue; "
+      "other=\"$parent/$other_type\"; "
+      "if [ ! -e \"$other\" ] && [ ! -L \"$other\" ]; then continue; fi; "
+      "if [ -L \"$other\" ] || [ ! -d \"$other\" ] || "
+      "! git -C \"$other\" rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+      "echo 'Cannot safely classify an existing repository; cleanup aborted' >&2; "
+      "exit 12; "
+      "fi; "
+      "old_prefix=$(repo_prefix \"$other\" \"$other_type\") || { "
+      "echo 'Cannot determine an existing repository customer prefix; cleanup aborted' >&2; "
+      "exit 13; "
+      "}; "
+      "if [ \"$old_prefix\" != \"$new_prefix\" ]; then "
+      "mismatched=\"$mismatched $other_type\"; "
+      "fi; "
+      "done; "
+      "for other_type in $mismatched; do "
+      "other=\"$parent/$other_type\"; "
+      "rm -rf -- \"$other\" || { "
+      "echo 'Could not remove a repository with a different customer prefix' >&2; "
+      "exit 14; "
+      "}; "
+      "done; "
+      "echo 'Repository installed; mismatched repositories removed'; "
+      "else "
+      "echo 'Repository installed; cleanup skipped because URL has no customer prefix' >&2; "
+      "fi";
+
+  command += cleanupCommand;
 
   executeCommandInternal(command, true);
 }
@@ -849,11 +997,14 @@ void SshWorker::loadInstalledRepositoryOrigin() {
     return;
   }
 
-  const QString repoArg = quoteShellArgument(kRepoPath);
-  const QString command = "git -C " + repoArg +
-                          " rev-parse --is-inside-work-tree >/dev/null 2>&1 || "
-                          "{ echo 'Configured path is not a Git repository' >&2; exit 2; }; "
-                          "git -C " + repoArg + " remote get-url origin";
+  if (m_activeRepositoryType.isEmpty()) {
+    emit commandFailed("Bitte erst ein Repository auswählen");
+    return;
+  }
+
+  const QString repoPath = quoteShellArgument(repositoryPathForType(m_activeRepositoryType));
+
+  const QString command = "git -C " + repoPath + " remote get-url origin";
 
   executeCommandInternal(command, false);
 }
@@ -865,16 +1016,40 @@ void SshWorker::loadInstalledRepositoryInfo() {
     return;
   }
 
-  const QString repoArg = kRepoPath;
+  const QString candidates =
+      quoteShellArgument(QDir(kRemoteBuildRoot).filePath("SRC")) + " " +
+      quoteShellArgument(QDir(kRemoteBuildRoot).filePath("SandBox")) + " " +
+      quoteShellArgument(QDir(kRemoteBuildRoot).filePath("KiSoft-One"));
 
-  const QString command = 
-                        "if ! git -C " + repoArg +
-                        " rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
-                        "printf '%s\\n' '__NO_INSTALLED_REPOSITORY__'; exit 0; fi; "
-                        "origin=$(git -C " + repoArg + " remote get-url origin) || exit; "
-                        "branch=$(git -C " + repoArg + " branch --show-current) || exit; "
+const QString command = "found=0; "
+                        "for repo in " + candidates + "; do "
+                        "if git -C \"$repo\" rev-parse --is-inside-work-tree >/dev/null 2>&1; then "
+                        "type=${repo##*/}; "
+                        "origin=$(git -C \"$repo\" remote get-url origin) || exit 2; "
+                        "branch=$(git -C \"$repo\" branch --show-current) || exit 3; "
                         "if [ -z \"$branch\" ]; then branch='(detached HEAD)'; fi; "
-                        "printf '%s\\t%s\\n' \"$origin\" \"$branch\"";
+                        "printf '%s\\t%s\\t%s\\n' \"$type\" \"$origin\" \"$branch\"; "
+                        "found=1; "
+                        "fi; "
+                        "done; "
+                        "if [ \"$found\" -eq 0 ]; then "
+                        "printf '%s\\n' '__NO_INSTALLED_REPOSITORY__'; "
+                        "fi";
   
   executeCommandInternal(command, false);
+}
+
+void SshWorker::setActiveDirectory(const QString &type) {
+
+  if (type.isEmpty()) {
+    m_activeRepositoryType.clear();
+    return;
+  }
+
+  if (repositoryPathForType(type).isEmpty()) {
+    emit commandFailed("Repository type is not allowed");
+    return;
+  }
+
+  m_activeRepositoryType = type;
 }

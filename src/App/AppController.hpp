@@ -7,6 +7,8 @@
 #include <QUrl>
 #include <qglobal.h>
 #include <qtmetamacros.h>
+#include <QVariantList>
+#include <QVariantMap>
 
 // AppController ist eine QObject-basierte Klasse.
 // Warum? Weil wir sie später als Kontextproperty an QML übergeben wollen.
@@ -35,6 +37,12 @@ class AppController : public QObject {
   Q_PROPERTY(bool installedRepositoryInfoLoaded
              READ installedRepositoryInfoLoaded
              NOTIFY installedRepositoryChanged)
+  Q_PROPERTY(QVariantList installedRepositories
+             READ installedRepositories
+             NOTIFY installedRepositoryChanged)
+  Q_PROPERTY(QString activeRepositoryType
+             READ activeRepositoryType
+             NOTIFY installedRepositoryChanged)
 
 public:
   // parent ist optional, aber in Qt üblich.
@@ -49,6 +57,10 @@ public:
   QString installedRepository() const;
   QString installedBranch() const;
   bool installedRepositoryInfoLoaded() const;
+
+  QVariantList installedRepositories() const;
+  QString activeRepositoryType() const;
+  void selectInstallRepository(const QString &type);
 
 public slots: // public slots sind für QML aufrufbar.
 
@@ -76,15 +88,16 @@ public slots: // public slots sind für QML aufrufbar.
   bool sendRepoLink(const QString &repoLink);
   
   void loadRemoteBranches(const QString &url);
-
   bool selectRemoteBranch(const QString &branch);
 
   void fetchSelectedBranch();
   void pullSelectedBranch();
   void replaceSelectedRepository();
   void loadInstalledRepositoryBranches();
-
   void loadInstalledRepositoryInfo();
+  
+  void setActiveDirectory(const QString &type);
+
 
 
 signals:
@@ -111,6 +124,7 @@ signals:
   void remoteBranchesFailed(const QString &message);
   void installedRepositoryChanged();
 
+
 private:
   LoginService *m_loginService;
   
@@ -136,4 +150,9 @@ private:
   bool m_refreshInstalledRepositoryAfterCommand = false;
   bool m_installedRepositoryInfoLoaded = false;
 
+  QVariantList m_installedRepositories;
+  QString m_activeRepositoryType;
+  QString m_repositoryTypeToActivateAfterReplace;
+
+  bool isKiSoftOneActive() const;
 };

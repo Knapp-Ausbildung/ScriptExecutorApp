@@ -10,6 +10,8 @@
 #include <qglobal.h>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QVariantMap>
+#include <QVariantList>
 
 namespace {
   QString removeAnsiSequence(QString text) {
@@ -18,6 +20,19 @@ namespace {
     text.remove(ansiSequence);
     text.remove(QChar(0x18)); // Entfernt ESC-Zeichen
     return text;
+  }
+
+  QString repositoryTypeFromUrl(const QString &urlText) {
+    const QString name = QUrl(urlText).path(QUrl::FullyDecoded).section('/', -1);
+
+    for (const QString &type : {QStringLiteral("KiSoft-One"), 
+                                QStringLiteral("SandBox"), 
+                                QStringLiteral("SRC")}) {
+      if (name == type || name.endsWith(QStringLiteral("-") + type)) {
+        return type;
+      }
+    }
+    return {};
   }
 }
 
@@ -65,62 +80,120 @@ AppController::AppController(QObject *parent)
       }
 
       const QString originUrl = standardOutput.trimmed();
+
       if (originUrl.isEmpty()) {
         emit remoteBranchesFailed("Das Repository hat keine Origin-URL");
         return;
       }
 
-      loadRemoteBranches(originUrl);
+      QUrl origin(originUrl);
+      origin.setUserInfo(QString());
+
+      const QString cleanOrigin = origin.toString(QUrl::FullyEncoded);
+      loadRemoteBranches(cleanOrigin);
       return;
     } 
-
-    if (exitStatus == 0 && standardOutput.trimmed() == QStringLiteral("__NO_INSTALLED_REPOSITORY__")) {
-      m_installedRepository.clear();
-      m_installedBranch.clear();
-      m_installedRepositoryInfoLoaded = true;
-      emit installedRepositoryChanged();
-      return;
-    }
 
     if (m_loadingInstalledRepositoryInfo) {
       m_loadingInstalledRepositoryInfo = false;
 
-      if (exitStatus == 0 &&
-          standardOutput.trimmed() ==
-              QStringLiteral("__NO_INSTALLED_REPOSITORY__")) {
-                m_installedRepository.clear();
-                m_installedBranch.clear();
-                m_installedRepositoryInfoLoaded = true;
-                emit installedRepositoryChanged();
-                return;
+      if (exitStatus != 0) {
+        emit commandFailed(standardError.trimmed().isEmpty() 
+                           ? QStringLiteral("Installierte Repositories konnten nicht geladen werden")
+                           : standardError.trimmed()); 
+        return;              
       }
 
-      const int separator = standardOutput.indexOf('\t');
-      if (exitStatus != 0 || separator < 0) {
+      const QString output = standardOutput.trimmed();
+
+      if (output == QStringLiteral("__NO_INSTALLED_REPOSITORY__")) {
+        m_installedRepositories.clear();
+        m_activeRepositoryType.clear();
         m_installedRepository.clear();
         m_installedBranch.clear();
+        m_installedRepositoryInfoLoaded = true;
+        m_loginService->setActiveDirectory(QString());
         emit installedRepositoryChanged();
-        emit commandFailed(standardError.trimmed().isEmpty()
-                           ? QStringLiteral("Installiertes Repository konnte nicht gelesen werden")
-                           : standardError.trimmed());
+        m_repositoryTypeToActivateAfterReplace.clear();
+        return;
+    }
+
+    QVariantList repositories;
+
+    for (const QString &line : output.split('\n', Qt::SkipEmptyParts)) {
+      const QStringList fields = line.split('\t');
+
+      if (fields.size() != 3) {
+        m_loadingInstalledRepositoryInfo = false;
+        emit commandFailed(QStringLiteral("Ungültiges Format der Repository Informationen"));
         return;
       }
 
-      m_installedRepository = standardOutput.left(separator).trimmed();
-      m_installedBranch = standardOutput.mid(separator + 1).trimmed();
-      m_installedRepositoryInfoLoaded = true;
-      emit installedRepositoryChanged();
-      return;
+      QVariantMap repository;
+      QUrl origin(fields.at(1).trimmed());
+      origin.setUserInfo(QString());
+
+      repository.insert(QStringLiteral("type"), fields.at(0));
+      repository.insert(QStringLiteral("origin"), origin.toString(QUrl::FullyEncoded));
+      repository.insert(QStringLiteral("branch"), fields.at(2));
+      repositories.append(repository);
     }
 
+    m_installedRepositories = repositories;
+    m_installedRepositoryInfoLoaded = true;
+
+    if (!m_repositoryTypeToActivateAfterReplace.isEmpty()) {
+      const QString type = m_repositoryTypeToActivateAfterReplace;
+      m_repositoryTypeToActivateAfterReplace.clear();
+
+      for (const QVariant &value : repositories) {
+        const QVariantMap repository = value.toMap();
+
+         if (repository.value(QStringLiteral("type")).toString() == type) {
+          selectInstallRepository(type);
+          return;
+         }
+      }
+    }
+
+    bool activeRepositoryStillInstalled = false;
+
+    for (const QVariant &value : repositories) {
+      const QVariantMap repository = value.toMap();
+
+      if (repository.value(QStringLiteral("type")).toString() == m_activeRepositoryType) {
+        activeRepositoryStillInstalled = true;
+        break;
+      }
+    }
+
+    if (repositories.size() == 1) {
+      const QVariantMap repository = repositories.first().toMap();
+      selectInstallRepository(repository.value(QStringLiteral("type")).toString());
+    } else if (repositories.size() > 1 ) {
+      if (activeRepositoryStillInstalled) {
+        selectInstallRepository(m_activeRepositoryType);
+      } else {
+        m_activeRepositoryType.clear();
+        m_installedRepository.clear();
+        m_installedBranch.clear();
+        m_loginService->setActiveDirectory(QString());
+      }
+    }
+
+    emit installedRepositoryChanged();
+    return;
+  }
     if(!m_loadingRemoteBranches) {
       writeCommandLog(standardOutput, standardError, exitStatus);
       emit commandCompleted(standardOutput, standardError, exitStatus);
       if (m_refreshInstalledRepositoryAfterCommand) {
-        m_refreshInstalledRepositoryAfterCommand = false;
-        if (exitStatus == 0) {
-          loadInstalledRepositoryInfo();
+        if(!m_repositoryTypeToActivateAfterReplace.isEmpty() && 
+           !standardOutput.contains(QStringLiteral("__REPOSITORY_INSTALL_SUCCEEDED__"))) {
+          m_repositoryTypeToActivateAfterReplace.clear();
         }
+        m_refreshInstalledRepositoryAfterCommand = false;
+        loadInstalledRepositoryInfo();
       }
       return;
     }
@@ -163,7 +236,7 @@ AppController::AppController(QObject *parent)
 
   connect(m_loginService, &LoginService::commandFailed, 
           this, [this](const QString &message) {
-            
+      m_repositoryTypeToActivateAfterReplace.clear();
 
       if (m_loadingInstalledRepositoryInfo) {
         m_loadingInstalledRepositoryInfo = false;
@@ -191,6 +264,8 @@ AppController::AppController(QObject *parent)
 
   connect(m_loginService, &LoginService::commandCancelled,
           this, [this]() {
+
+    m_repositoryTypeToActivateAfterReplace.clear();
 
     if (m_loadingInstalledRepositoryInfo) {
         m_loadingInstalledRepositoryInfo = false;
@@ -227,6 +302,7 @@ AppController::AppController(QObject *parent)
             
             emit commandOutputReceived(chunk);
   });
+
 }
 // Getter
 bool AppController::isLoggedIn() const { 
@@ -249,6 +325,14 @@ bool AppController::installedRepositoryInfoLoaded() const {
   return m_installedRepositoryInfoLoaded;
 }
 
+QVariantList AppController::installedRepositories() const {
+  return m_installedRepositories;
+}
+
+QString AppController::activeRepositoryType() const {
+  return m_activeRepositoryType;
+
+}
 void AppController::attemptLogin(const QString &ipAdress,
                                  const QString &username,
                                  const QString &password) {
@@ -282,10 +366,18 @@ void AppController::openDashboard() {
 }
 
 void AppController::executeCommand(const QString &command) {
+  if (!isKiSoftOneActive()) {
+    emit commandFailed(QStringLiteral("Diese Aktion ist nur mit aktivem KiSoft-One Repository verfügbar"));
+    return;
+  }
   m_loginService->executeCommand(command);
 }
 // Für Preset-Buttons zum Ausführen von Befehlen
 void AppController::executePresetCommand(const QString &commandId) {
+  if (!isKiSoftOneActive()) {
+    emit commandFailed(QStringLiteral("Diese Aktion ist nur mit aktivem KiSoft-One Repository verfügbar"));
+    return;
+  }
   m_loginService->executePresetCommand(commandId);
 }
 
@@ -418,6 +510,11 @@ bool AppController::sendRepoLink(const QString &repoLink) {
   }
 
   void AppController::fetchSelectedBranch() {
+    if (!isKiSoftOneActive()) {
+    emit commandFailed(QStringLiteral("Diese Aktion ist nur mit aktivem KiSoft-One Repository verfügbar"));
+    return;
+  }
+
     if (!m_installedRepositoryInfoLoaded ||
         m_installedRepository.isEmpty() ||
         m_installedBranch.isEmpty()) {
@@ -429,6 +526,10 @@ bool AppController::sendRepoLink(const QString &repoLink) {
   }
 
   void AppController::pullSelectedBranch() {
+    if (!isKiSoftOneActive()) {
+      emit commandFailed(QStringLiteral("Diese Aktion ist nur mit aktivem KiSoft-One Repository verfügbar"));
+      return;
+    }
     if (!m_installedRepositoryInfoLoaded || 
         m_installedRepository.isEmpty() ||
         m_installedBranch.isEmpty()) {
@@ -446,12 +547,23 @@ bool AppController::sendRepoLink(const QString &repoLink) {
       return;
     }
 
+    m_repositoryTypeToActivateAfterReplace = repositoryTypeFromUrl(m_selectedRepoUrl);
+
+    if (m_repositoryTypeToActivateAfterReplace.isEmpty()) {
+      emit commandFailed("Repository-Typ aus der URL konnte nicht ermittelt werden");
+      return;
+    }
+
     m_refreshInstalledRepositoryAfterCommand = true;
     m_loginService->replaceRepository(m_selectedRepoUrl, m_selectedBranch);
   }
 
   void AppController::loadInstalledRepositoryBranches() {
-
+    if (!isKiSoftOneActive()) {
+      emit commandFailed(QStringLiteral("Diese Aktion ist nur mit aktivem KiSoft-One Repository verfügbar"));
+      return;
+    }
+    
     if(!m_installedRepositoryInfoLoaded || m_installedRepository.isEmpty()) {
       emit remoteBranchesFailed(QStringLiteral("Bitte erst Repository auswählen!"));
       return;
@@ -474,3 +586,30 @@ bool AppController::sendRepoLink(const QString &repoLink) {
     m_loadingInstalledRepositoryInfo = true;
     m_loginService->loadInstalledRepositoryInfo();
   }
+
+void AppController::setActiveDirectory(const QString &type) {
+  selectInstallRepository(type);
+}
+
+void AppController::selectInstallRepository(const QString &type) {
+  for (const QVariant &value : m_installedRepositories) {
+    const QVariantMap repository = value.toMap();
+
+    if (repository.value(QStringLiteral("type")).toString() == type) {
+      m_activeRepositoryType = type;
+      m_installedRepository = repository.value(QStringLiteral("origin")).toString();
+      m_installedBranch = repository.value(QStringLiteral("branch")).toString();
+
+      m_loginService->setActiveDirectory(type);
+      emit installedRepositoryChanged();
+      return;
+    }
+  }
+
+  emit commandFailed("Das ausgewählte Repository ist nicht installiert");
+}
+
+bool AppController::isKiSoftOneActive() const {
+  return m_installedRepositoryInfoLoaded &&
+         m_activeRepositoryType == QStringLiteral("KiSoft-One");
+}

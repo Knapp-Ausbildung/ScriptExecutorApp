@@ -56,6 +56,7 @@ signals:
                                   const QString &branch);
   void installedRepositoryOriginRequested();
   void installedRepositoryInfoRequested();
+  void activeDirectoryRequested(const QString &type);
 
 public slots:
   void login(const QString &host, 
@@ -79,6 +80,7 @@ public slots:
                          const QString &branch);
   void loadInstalledRepositoryOrigin();
   void loadInstalledRepositoryInfo();
+  void setActiveDirectory(const QString &type);
   
 private:
   QThread *m_thread = nullptr;

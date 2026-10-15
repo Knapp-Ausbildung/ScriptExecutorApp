@@ -55,6 +55,9 @@ LoginService::LoginService(QObject *parent)
           Qt::QueuedConnection);
   connect(this, &LoginService::installedRepositoryInfoRequested,
           m_worker, &SshWorker::loadInstalledRepositoryInfo,
+          Qt::QueuedConnection);
+  connect(this, &LoginService::activeDirectoryRequested,
+          m_worker, &SshWorker::setActiveDirectory,
           Qt::QueuedConnection);        
 
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
@@ -176,6 +179,10 @@ void LoginService::loadInstalledRepositoryInfo() {
 
   emit prepareCommandRequested();
   emit installedRepositoryInfoRequested();
+}
+
+void LoginService::setActiveDirectory(const QString &type) {
+    emit activeDirectoryRequested(type);
 }
 
 LoginService::~LoginService() {

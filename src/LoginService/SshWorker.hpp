@@ -40,6 +40,7 @@ public slots:
                           const QString &branch);
     void replaceRepository(const QString &url,
                            const QString &branch);
+    void setActiveDirectory(const QString &type);
 
     void loadInstalledRepositoryOrigin();
     void loadInstalledRepositoryInfo();
@@ -89,4 +90,6 @@ private:
     QMutex m_inputMutex;
     QByteArray m_pendingInput;
     bool m_inputPending = false;
+
+    QString m_activeRepositoryType;
 };

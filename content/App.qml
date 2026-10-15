@@ -145,6 +145,10 @@ ApplicationWindow {
 
             property bool commandRunning: false
 
+            readonly property bool kiSoftOneActive:
+                appController.installedRepositoryInfoLoaded &&
+                appController.activeRepositoryType === "KiSoft-One"
+
             property string activeCommandButton: ""
             
             property string outputHtml: ""
@@ -272,7 +276,7 @@ ApplicationWindow {
                 Text {
                     visible: appController.installedRepositoryInfoLoaded &&
                              appController.installedRepository.length === 0
-                    text: "Noch kein Repository geladen - bitte er das Setup durchführen"
+                    text: "Noch kein Repository geladen - bitte erst das Setup durchführen"
                 }
 
                 Text {
@@ -302,7 +306,8 @@ ApplicationWindow {
                         enabled: !dashboardRoot.commandRunning &&
                                  appController.installedRepositoryInfoLoaded &&
                                  appController.installedRepository.length > 0 &&
-                                 appController.installedBranch.length > 0
+                                 appController.installedBranch.length > 0 &&
+                                 dashboardRoot.kiSoftOneActive
 
                         onClicked: {
                             if (dashboardRoot.commandRunning)
@@ -319,7 +324,8 @@ ApplicationWindow {
                         enabled: !dashboardRoot.commandRunning &&
                                  appController.installedRepositoryInfoLoaded &&
                                  appController.installedRepository.length > 0 &&
-                                 appController.installedBranch.length > 0
+                                 appController.installedBranch.length > 0 &&
+                                 dashboardRoot.kiSoftOneActive
                                  
                         onClicked: {
                             if(dashboardRoot.commandRunning) {
@@ -337,7 +343,8 @@ ApplicationWindow {
                         enabled: !dashboardRoot.commandRunning &&
                                  appController.installedRepositoryInfoLoaded &&
                                  appController.installedRepository.length > 0 &&
-                                 appController.installedBranch.length > 0
+                                 appController.installedBranch.length > 0 &&
+                                 dashboardRoot.kiSoftOneActive
 
                         onClicked: {
                             if (dashboardRoot.commandRunning) {
@@ -353,25 +360,36 @@ ApplicationWindow {
 
                     }
 
+                    Button {
+                        visible: appController.installedRepositories.length > 1
+                        enabled: !dashboardRoot.commandRunning
+                        text: "Switch Repository"
+                        Accessible.name: text
+                        
+                        onClicked: repositorySwitchDialog.open()
+                    }
+
                 }
 
-                // TextField {
-                //     id: commandField
-                //     placeholderText: "Hier Command eingeben"
-                //     Accessible.name: "Hier Command eingeben"
-                //     width: 400
-                //     enabled: !dashboardRoot.commandRunning
+                TextField {
+                    id: commandField
+                    placeholderText: "Hier Command eingeben"
+                    Accessible.name: "Hier Command eingeben"
+                    width: 400
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
 
-                //     onAccepted: dashboardRoot.submitCommand()
-                // }
+                    onAccepted: dashboardRoot.submitCommand()
+                 }
                 Row {
                     spacing: 10
                     Layout.fillWidth: true
-                //     Button {
-                //     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
-                //     enabled: !dashboardRoot.commandRunning
-                //     onClicked: dashboardRoot.submitCommand()
-                // }
+                    Button {
+                    text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
+                    onClicked: dashboardRoot.submitCommand()
+                }
                 Button {
                     text:"Befehl abbrechen"
                     Accessible.name: "Befehl abbrechen"
@@ -387,7 +405,8 @@ ApplicationWindow {
                     text: "Status"
                     Accessible.name: "Status"
                     running: dashboardRoot.activeCommandButton === "status"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function () {
                         dashboardRoot.runPreset("status", "qking", "status")
                     }
@@ -397,7 +416,8 @@ ApplicationWindow {
                     text: "Restart"
                     Accessible.name: "Restart"
                     running: dashboardRoot.activeCommandButton === "restart"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
                         dashboardRoot.runPreset("restart", "restart", "restart")
                     }    
@@ -407,7 +427,8 @@ ApplicationWindow {
                     text: "Stop"
                     Accessible.name: "Stop"
                     running: dashboardRoot.activeCommandButton === "stop"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
                         dashboardRoot.runPreset("stop", "stop", "stop")
                     }
@@ -421,7 +442,8 @@ ApplicationWindow {
                     text: "Rebuild Database"
                     Accessible.name: "Rebuild Database"
                     running: dashboardRoot.activeCommandButton === "rebuildDb"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
                         dashboardRoot.runPreset("rebuildDb", "Datenbank wird rebuilded ...", "rebuildDb")
                     }
@@ -431,7 +453,8 @@ ApplicationWindow {
                     text: "Reinstall Database"
                     Accessible.name: "Reinstall Database"
                     running: dashboardRoot.activeCommandButton === "reinstallDb"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
                         dashboardRoot.runPreset("reinstallDb", "Datenbank wird reinstalliert ...", "reinstallDb")
                     }
@@ -441,7 +464,8 @@ ApplicationWindow {
                     text: "Reinstall KiSoft"
                     Accessible.name: "Rebuild Database"
                     running: dashboardRoot.activeCommandButton === "reinstallKiSoft"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
                         dashboardRoot.runPreset("reinstallKiSoft", "KiSoft wird reinstalliert ...", "reinstallKiSoft")
                     }
@@ -451,7 +475,8 @@ ApplicationWindow {
                     text: "Reinstall All"
                     Accessible.name: "Reinstall all"
                     running: dashboardRoot.activeCommandButton === "reinstallAll"
-                    enabled: !dashboardRoot.commandRunning
+                    enabled: !dashboardRoot.commandRunning &&
+                             dashboardRoot.kiSoftOneActive
                     clickHandler: function () {
                         dashboardRoot.runPreset("reinstallAll", "Alles wird reinstalliert", "reinstallAll")
                     }
@@ -924,6 +949,32 @@ ApplicationWindow {
             }
         }
       }
+    }
+
+    Dialog {
+        id: repositorySwitchDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "Repository wählen"
+        standardButtons: Dialog.Cancel
+
+        contentItem: Column {
+            spacing: 8
+
+            Repeater {
+                model: appController.installedRepositories
+
+                delegate: Button {
+                    required property var modelData
+                    text: modelData.type
+
+                    onClicked: {
+                        appController.setActiveDirectory(modelData.type)
+                        repositorySwitchDialog.close()
+                    }
+                }
+            }
+        }
     }
 
     Dialog {
