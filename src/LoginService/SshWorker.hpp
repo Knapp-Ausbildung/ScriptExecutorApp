@@ -45,6 +45,10 @@ public slots:
     void loadInstalledRepositoryOrigin();
     void loadInstalledRepositoryInfo();
 
+    void runOracleDataPump(bool restore);
+    void checkOracleBackupUser();
+    void createOracleBackupUser();
+
 signals:
     void hostKeyConfirmationRequested(const QString &host,
                                       int port,                              
@@ -75,7 +79,7 @@ private:
                             QString &normalizedBranch,
                             QString &error) const;
 
-    void executeCommandInternal(const QString &command, bool requestPty);
+    void executeCommandInternal(const QString &command, bool requestPty, bool continueOnOutputLimit = false);
 
     QTimer *m_keepAliveTimer = nullptr;
     int m_keepAliveFailures = 0;

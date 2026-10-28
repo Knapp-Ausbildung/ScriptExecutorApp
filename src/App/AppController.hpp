@@ -98,6 +98,8 @@ public slots: // public slots sind für QML aufrufbar.
   
   void setActiveDirectory(const QString &type);
 
+  void createOracleDump();
+  void restoreOracleDump();
 
 
 signals:
@@ -155,4 +157,8 @@ private:
   QString m_repositoryTypeToActivateAfterReplace;
 
   bool isKiSoftOneActive() const;
+
+  bool m_checkingOracleBackupUser = false;
+  bool m_pendingOracleRestore = false;
+  bool m_creatingOracleBackupUser = false;
 };

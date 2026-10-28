@@ -58,6 +58,10 @@ signals:
   void installedRepositoryInfoRequested();
   void activeDirectoryRequested(const QString &type);
 
+  void oracleDataPumpRequested(bool restore);
+  void checkOracleBackupuserRequested();
+  void createOracleBackupUserRequested();
+
 public slots:
   void login(const QString &host, 
              const QString &username,
@@ -81,7 +85,11 @@ public slots:
   void loadInstalledRepositoryOrigin();
   void loadInstalledRepositoryInfo();
   void setActiveDirectory(const QString &type);
-  
+
+  void runOracleDataPump(bool restore);
+  void checkOracleBackupUser();
+  void createOracleBackupUser();
+
 private:
   QThread *m_thread = nullptr;
   SshWorker *m_worker = nullptr;

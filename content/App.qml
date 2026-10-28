@@ -46,8 +46,6 @@ ApplicationWindow {
             border.color: control.running ? pulseColor : "transparent"
             radius: height / 2
 
-
-
             SequentialAnimation on pulseColor {
                 running: control.running
                 loops: Animation.Infinite
@@ -152,9 +150,15 @@ ApplicationWindow {
             property string activeCommandButton: ""
             
             property string outputHtml: ""
+            property bool outputScrollRestorePending: false
+            property bool outputWasAtBottom: true
+            property real outputScrollPosition: 0
 
             property string gitUsernameCache: ""
             property string gitPatCache: ""
+
+            property string oracleSudoPasswordCache: ""
+            property string oracleBackupPasswordCache: ""
 
             function escapeHtml(text) {
                 return String(text)
@@ -176,7 +180,7 @@ ApplicationWindow {
                 }
 
                 function segmentToHtml(segment, color) {
-                    const escaped = escapeHtml(segment)
+                    const escaped = escapeHtml(segment);
                     return color
                         ? "<span style=\"color:" + color + "\">" + escaped + "</span>"
                         : escaped
@@ -186,21 +190,21 @@ ApplicationWindow {
                     return sequence.endsWith("m") ? sequence : ""
                     })
 
-                    const sgr = /\u001b\[([0-9;]*)m/g
-                      let result = ""
-                      let currentColor = ""
-                      let lastIndex = 0
-                      let match
+                    const sgr = /\u001b\[([0-9;]*)m/g;
+                      let result = "";
+                      let currentColor = "";
+                      let lastIndex = 0;
+                      let match;
                 while ((match = sgr.exec(String(text))) !== null) {
                     result += segmentToHtml(text.slice(lastIndex, match.index), currentColor)
 
                     const codes = match[1] === ""
                         ? [0]
-                        : match[1].split(";").map(function(code) { return Number(code) })
+                        : match[1].split(";").map(function(code) { return Number(code) });
 
                     for (let i = 0; i < codes.length; i++)
                     {
-                        const code = codes[i]
+                        const code = codes[i];
                         if (code === 0 || code === 39)
                             currentColor = ""
                         else if (colors[code] !== undefined)
@@ -214,17 +218,35 @@ ApplicationWindow {
             }
 
             function appendOutput(text) {
-                outputHtml += ansiToHtml(text)
+                if (!outputScrollRestorePending) {
+                    const flickable = commandOutputScroll.contentItem;
+                    const maxY = Math.max(0, flickable.contentHeight - flickable.height);
+                    outputWasAtBottom = maxY - flickable.contentY <= 2
+                    outputScrollPosition = flickable.contentY
+                    outputScrollRestorePending = true
+                }
+
+                const formattedText = ansiToHtml(text);
+                outputHtml += formattedText
+
+                if (outputHtml.length > 300000) {
+                    outputHtml = "<br><span>[Earlier output omitted to limit memory]</span><br>"
+                                 + formattedText
+                }
+
                 commandOutput.text = outputHtml
             }
 
             function clearOutput() {
                 outputHtml = ""
+                outputScrollRestorePending = false
+                outputWasAtBottom = true
+                outputScrollPosition = 0
                 commandOutput.text = ""
             }
 
             function submitCommand() {
-                const command = commandField.text.trim()
+                const command = commandField.text.trim();
 
                 if (command.length === 0 || commandRunning)
                     return
@@ -246,10 +268,28 @@ ApplicationWindow {
                 appController.executePresetCommand(commandId)
             }
 
+            function runPresetWithSudoPassword(commandId, displayCommand, buttonId) {
+                if (commandRunning)
+                    return
+
+                clearOraclePasswordCache()
+                reinstallSudoCredentialsDialog.commandId = commandId
+                reinstallSudoCredentialsDialog.displayCommand = displayCommand
+                reinstallSudoCredentialsDialog.buttonId = buttonId
+                reinstallSudoCredentialsDialog.open()
+            }
+
             function repositoryDisplayName(remoteUrl) {
-                const parts = String(remoteUrl).split("/_git/")
-                const lastPart = parts[parts.length - 1].split(/[?#]/)[0]
+                const parts = String(remoteUrl).split("/_git/");
+                const lastPart = parts[parts.length - 1].split(/[?#]/)[0];
                 return decodeURIComponent(lastPart.replace(/\/+$/, "").replace(/\.git$/i, ""))
+            }
+
+            function clearOraclePasswordCache() {
+                oracleSudoPasswordCache = ""
+                oracleBackupPasswordCache = ""
+                oracleSudoPasswordField.clear()
+                oracleBackupPasswordField.clear()
             }
 
             ColumnLayout {
@@ -371,25 +411,25 @@ ApplicationWindow {
 
                 }
 
-                TextField {
-                    id: commandField
-                    placeholderText: "Hier Command eingeben"
-                    Accessible.name: "Hier Command eingeben"
-                    width: 400
-                    enabled: !dashboardRoot.commandRunning &&
-                             dashboardRoot.kiSoftOneActive
+                // TextField {
+                //     id: commandField
+                //     placeholderText: "Hier Command eingeben"
+                //     Accessible.name: "Hier Command eingeben"
+                //     width: 400
+                //     enabled: !dashboardRoot.commandRunning &&
+                //              dashboardRoot.kiSoftOneActive
 
-                    onAccepted: dashboardRoot.submitCommand()
-                 }
+                //     onAccepted: dashboardRoot.submitCommand()
+                //  }
                 Row {
                     spacing: 10
                     Layout.fillWidth: true
-                    Button {
-                    text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
-                    enabled: !dashboardRoot.commandRunning &&
-                             dashboardRoot.kiSoftOneActive
-                    onClicked: dashboardRoot.submitCommand()
-                }
+                // Button {
+                //     text: dashboardRoot.commandRunning ? "Wird ausgeführt ..." : "Befehl ausführen"
+                //     enabled: !dashboardRoot.commandRunning &&
+                //              dashboardRoot.kiSoftOneActive
+                //     onClicked: dashboardRoot.submitCommand()
+                // }
                 Button {
                     text:"Befehl abbrechen"
                     Accessible.name: "Befehl abbrechen"
@@ -448,6 +488,31 @@ ApplicationWindow {
                         dashboardRoot.runPreset("rebuildDb", "Datenbank wird rebuilded ...", "rebuildDb")
                     }
                 }
+                AnimatedCommandButton {
+                    text: "Dump current DB"
+                    Accessible.name: text
+                    running: dashboardRoot.activeCommandButton === "oracleDump"
+
+                    enabled: !dashboardRoot.commandRunning
+                    clickHandler: function() {
+                    oracleCredentialsDialog.restoreMode = false;
+                    oracleCredentialsDialog.open()
+                    }
+                }
+
+                AnimatedCommandButton {
+                    text: "Load current dumped DB"
+                    Accessible.name: text
+                    running: dashboardRoot.activeCommandButton === "oracleRestore"
+                    enabled: !dashboardRoot.commandRunning
+                    clickHandler: function() {
+                        if (dashboardRoot.commandRunning) {
+                            return
+                        }
+
+                    restoreConfirmation.open()
+                    }                 
+                }
 
                 AnimatedCommandButton {
                     text: "Reinstall Database"
@@ -456,7 +521,8 @@ ApplicationWindow {
                     enabled: !dashboardRoot.commandRunning &&
                              dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
-                        dashboardRoot.runPreset("reinstallDb", "Datenbank wird reinstalliert ...", "reinstallDb")
+                        dashboardRoot.runPresetWithSudoPassword(
+                            "reinstallDb", "Datenbank wird reinstalliert ...", "reinstallDb")
                     }
                 }
 
@@ -467,7 +533,8 @@ ApplicationWindow {
                     enabled: !dashboardRoot.commandRunning &&
                              dashboardRoot.kiSoftOneActive
                     clickHandler: function() {
-                        dashboardRoot.runPreset("reinstallKiSoft", "KiSoft wird reinstalliert ...", "reinstallKiSoft")
+                        dashboardRoot.runPresetWithSudoPassword(
+                            "reinstallKiSoft", "KiSoft wird reinstalliert ...", "reinstallKiSoft")
                     }
                 }   
             
@@ -478,7 +545,8 @@ ApplicationWindow {
                     enabled: !dashboardRoot.commandRunning &&
                              dashboardRoot.kiSoftOneActive
                     clickHandler: function () {
-                        dashboardRoot.runPreset("reinstallAll", "Alles wird reinstalliert", "reinstallAll")
+                        dashboardRoot.runPresetWithSudoPassword(
+                            "reinstallAll", "Alles wird reinstalliert", "reinstallAll")
                     }
                 }
             }
@@ -503,6 +571,7 @@ ApplicationWindow {
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
                         anchors.topMargin: 10
+                        anchors.bottomMargin: 18
                     }
                     ScrollBar.horizontal.policy: ScrollBar.AsNeeded
                 
@@ -515,10 +584,24 @@ ApplicationWindow {
                     textFormat: TextEdit.RichText
                     font.family: "monospace"
 
-                    onTextChanged: Qt.callLater(function() {
-                        const flickable = commandOutputScroll.contentItem
-                        flickable.contentY = Math.max(0, flickable.contentHeight - flickable.height)
+                    onContentHeightChanged: {
+                        if (!dashboardRoot.outputScrollRestorePending) {
+                            return
+                        }
+
+                        Qt.callLater(function() {
+                            if (!dashboardRoot.outputScrollRestorePending) {
+                                return
+                            }
+
+                            const flickable = commandOutputScroll.contentItem;
+                            const maxY = Math.max(0, flickable.contentHeight - flickable.height);
+                            flickable.contentY = dashboardRoot.outputWasAtBottom
+                                    ? maxY
+                                    : Math.min(dashboardRoot.outputScrollPosition, maxY)
+                            dashboardRoot.outputScrollRestorePending = false
                         })
+                    }
                     }
                 }
                     
@@ -569,12 +652,16 @@ ApplicationWindow {
                     dashboardRoot.commandRunning = false
 
                     if (exitStatus !== 0) {
-                        commandError.text = "Befehl beendet mit Exit-Code " + exitStatus
+                        const details = standardError.trim()
+                        commandError.text = details.length > 0
+                                            ? details
+                                            : "Befehl beendet mit Exit-Code " + exitStatus
                     } else {
                         commandError.text = ""
                     }
 
                     dashboardRoot.activeCommandButton= ""
+                    dashboardRoot.clearOraclePasswordCache()
                 }
 
                 function onCommandFailed(message) {
@@ -582,6 +669,7 @@ ApplicationWindow {
                     commandError.text = message
                     dashboardRoot.appendOutput("\n[Fehler] " + message + "\n")
                     dashboardRoot.activeCommandButton= ""
+                    dashboardRoot.clearOraclePasswordCache()
                 }
 
                 function onCommandCancelled() {
@@ -589,16 +677,22 @@ ApplicationWindow {
                     commandError.text = ""
                     dashboardRoot.appendOutput("\n[Befehl abgebrochen]\n")
                     dashboardRoot.activeCommandButton= ""
+                    dashboardRoot.clearOraclePasswordCache()
                 }
 
                 function onCommandInputRequested(prompt, secret) {
-                    const lowerPrompt = prompt.toLowerCase()
+                    const lowerPrompt = prompt.toLowerCase();
+                    const oracleCommand = dashboardRoot.activeCommandButton === "oracleDump" ||
+                                          dashboardRoot.activeCommandButton === "oracleRestore"
+                    const reinstallCommand = dashboardRoot.activeCommandButton === "reinstallAll" ||
+                                             dashboardRoot.activeCommandButton === "reinstallKiSoft" ||
+                                             dashboardRoot.activeCommandButton === "reinstallDb"
                     const askForUsername = lowerPrompt.includes("please provide your git remote username") ||
-                                           lowerPrompt.includes("username for 'https://")
+                                           lowerPrompt.includes("username for 'https://");
 
-                    const askForPat =  lowerPrompt.includes("password for 'https://")
+                    const askForPat =  lowerPrompt.includes("password for 'https://");
                     const askForUpdateParameterTables = lowerPrompt.includes("execute prepared updates") &&
-                                                       lowerPrompt.includes("(y/n)?")
+                                                       lowerPrompt.includes("(y/n)?");
                     
                     if(askForUsername) {
                         if (dashboardRoot.gitUsernameCache.length > 0) {
@@ -628,6 +722,24 @@ ApplicationWindow {
                         return;
                     }
 
+                    if ((oracleCommand || reinstallCommand) && lowerPrompt.includes("password")) {
+                        const isSudoPrompt = lowerPrompt.includes("sudo") &&
+                                             lowerPrompt.includes("for klassx")
+                        const password = isSudoPrompt
+                                         ? dashboardRoot.oracleSudoPasswordCache
+                                         : dashboardRoot.oracleBackupPasswordCache
+                        if (password.length > 0) {
+                            appController.submitCommandInput(password)
+                            return
+                            
+                        }
+                    }
+
+                    if (oracleCommand && lowerPrompt.trim().endsWith("username:")) {
+                        dashboardRoot.appendOutput("\n[Fehler] Oracle-Anmeldung fehlgeschlagen; BACKUPTOOL_USER fragt erneut nach dem Benutzernamen.")
+                        appController.cancelCommand()
+                        return
+                    }
                     commandInputDialog.prompt = prompt
                     commandInputDialog.secret = secret
                     commandInputDialog.open()
@@ -675,7 +787,28 @@ ApplicationWindow {
                 commandInputField.clear()
                 appController.cancelCommand()
             }
-            }
+        }
+
+        Dialog {
+            id: restoreConfirmation
+            anchors.centerIn: Overlay.overlay
+            modal: true
+            title: "Datenbank wiederherstellen?"
+            standardButtons: Dialog.Yes | Dialog.No
+
+        Text {
+            text: "Der Restore löscht die Schemas LU, AFCONFIG, ARCHIVE, KLASSX, KXGUI, KXREPORT und USER_MANAGEMENT vollständig und importiert sie neu. Dabei werden vorhandene Daten überschrieben. Fortfahren?"
+            wrapMode: Text.Wrap
+        }
+
+        onAccepted: {
+            if (dashboardRoot.commandRunning)
+            return
+
+            oracleCredentialsDialog.restoreMode = true
+            oracleCredentialsDialog.open()
+        }
+    }
         
 
         Connections {
@@ -749,19 +882,19 @@ ApplicationWindow {
             }
         }
                 onAccepted: {
-                const username = gitUsernameField.text.trim()
-                const pat = gitPatField.text
+                const username = gitUsernameField.text.trim();
+                const pat = gitPatField.text;
 
                 if (username.length === 0 || pat.length === 0) {
                     errorMessage = "Bitte Benutzername und PAT eingeben"
-                    Qt.callLater(function() {gitCredentialsDialog.open() })
+                    Qt.callLater(function() {gitCredentialsDialog.open() });
                     return
                 }
 
                 dashboardRoot.gitUsernameCache = username
                 dashboardRoot.gitPatCache = pat
                 
-                const answer = requestedField === "username" 
+                const answer = requestedField === "username"
                                ? username 
                                : pat
 
@@ -779,9 +912,91 @@ ApplicationWindow {
                 dashboardRoot.gitPatCache = ""
                 appController.cancelCommand()
             }
-        } 
-     }
+        }
+        
+    Dialog {
+        id: oracleCredentialsDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: restoreMode ? "Oracle-Zugangsdaten für Restore"
+                           : "Oracle-Zugangsdaten für Dump"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        property bool restoreMode: false
+
+        contentItem: ColumnLayout {
+            TextField {
+                id: oracleSudoPasswordField
+                Layout.fillWidth: true
+                placeholderText: "sudo-Passwort für klassx"
+                echoMode: TextInput.Password
+            }
+
+            TextField {
+                id: oracleBackupPasswordField
+                Layout.fillWidth: true
+                placeholderText: "Passwort für BACKUPTOOL_USER"
+                echoMode: TextInput.Password
+            }
+        }
+
+        onAccepted: {
+            dashboardRoot.oracleSudoPasswordCache = oracleSudoPasswordField.text
+            dashboardRoot.oracleBackupPasswordCache = oracleBackupPasswordField.text
+            oracleSudoPasswordField.clear()
+            oracleBackupPasswordField.clear()
+
+            dashboardRoot.commandRunning = true
+            dashboardRoot.activeCommandButton = restoreMode
+                                                ? "oracleRestore"
+                                                : "oracleDump"
+            commandError.text = ""
+
+            if (restoreMode) {
+                appController.restoreOracleDump()
+            } else {
+                appController.createOracleDump()
+            }
+        }
+
+        onRejected: {
+            dashboardRoot.clearOraclePasswordCache()
+        }
     }
+
+    Dialog {
+        id: reinstallSudoCredentialsDialog
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "sudo-Passwort für Reinstall"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+
+        property string commandId: ""
+        property string displayCommand: ""
+        property string buttonId: ""
+
+        contentItem: ColumnLayout {
+    TextField {
+        id: reinstallSudoPasswordField
+        Layout.fillWidth: true
+        placeholderText: "sudo-Passwort für klassx"
+        echoMode: TextInput.Password
+    }
+        }
+
+        onAccepted: {
+    dashboardRoot.oracleSudoPasswordCache = reinstallSudoPasswordField.text
+    reinstallSudoPasswordField.clear()
+    dashboardRoot.runPreset(commandId, displayCommand, buttonId)
+        }
+
+        onRejected: {
+    reinstallSudoPasswordField.clear()
+    dashboardRoot.clearOraclePasswordCache()
+        }
+    }
+   }
+  }
 
     Popup {
         id: loginFailedPopup
@@ -869,7 +1084,7 @@ ApplicationWindow {
         property bool loadingBranches: false
 
         function loadBranches() {
-            console.log("Repository bestätigt: ", repoURL.text)
+            console.log("Repository bestätigt: ", repoURL.text);
             selectRepo.errorMessage = ""
 
             if (appController.sendRepoLink(repoURL.text)) {
@@ -965,7 +1180,7 @@ ApplicationWindow {
                 model: appController.installedRepositories
 
                 delegate: Button {
-                    required property var modelData
+                    required property var modelData;
                     text: modelData.type
 
                     onClicked: {

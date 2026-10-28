@@ -56,9 +56,26 @@ LoginService::LoginService(QObject *parent)
   connect(this, &LoginService::installedRepositoryInfoRequested,
           m_worker, &SshWorker::loadInstalledRepositoryInfo,
           Qt::QueuedConnection);
+  connect(this, &LoginService::fetchRemoteBranchRequested,
+          m_worker, &SshWorker::fetchRemoteBranch,
+          Qt::QueuedConnection);
+  connect(this, &LoginService::replaceRepositoryRequested,
+          m_worker, &SshWorker::replaceRepository,
+          Qt::QueuedConnection);
+          
   connect(this, &LoginService::activeDirectoryRequested,
           m_worker, &SshWorker::setActiveDirectory,
-          Qt::QueuedConnection);        
+          Qt::QueuedConnection);
+  connect(this, &LoginService::oracleDataPumpRequested,
+          m_worker, &SshWorker::runOracleDataPump,
+          Qt::QueuedConnection);      
+  connect(this, &LoginService::checkOracleBackupuserRequested,
+          m_worker, &SshWorker::checkOracleBackupUser,
+          Qt::QueuedConnection); 
+  connect(this, &LoginService::createOracleBackupUserRequested,
+          m_worker, &SshWorker::createOracleBackupUser,
+          Qt::QueuedConnection);
+
 
   // Ergebnisse vom Worker zurück an den LoginService / UI-Thread
   connect(m_worker, &SshWorker::hostKeyConfirmationRequested,
@@ -89,15 +106,6 @@ LoginService::LoginService(QObject *parent)
   connect(this, &LoginService::commandInputSubmitted,
           m_worker, &SshWorker::submitCommandInput,
           Qt::DirectConnection);
-
-
-
-  connect(this, &LoginService::fetchRemoteBranchRequested,
-          m_worker, &SshWorker::fetchRemoteBranch,
-          Qt::QueuedConnection);
-  connect(this, &LoginService::replaceRepositoryRequested,
-          m_worker, &SshWorker::replaceRepository,
-          Qt::QueuedConnection);
 
   m_thread->start();
 }
@@ -182,9 +190,27 @@ void LoginService::loadInstalledRepositoryInfo() {
 }
 
 void LoginService::setActiveDirectory(const QString &type) {
-    emit activeDirectoryRequested(type);
+
+  emit activeDirectoryRequested(type);
 }
 
+void LoginService::runOracleDataPump(bool restore) {
+
+  emit prepareCommandRequested();
+  emit oracleDataPumpRequested(restore);
+}
+
+void LoginService::checkOracleBackupUser() {
+
+  emit prepareCommandRequested();
+  emit checkOracleBackupuserRequested();
+}
+
+void LoginService::createOracleBackupUser() {
+
+  emit prepareCommandRequested();
+  emit createOracleBackupUserRequested();
+}
 LoginService::~LoginService() {
   m_thread->quit();
   m_thread->wait();

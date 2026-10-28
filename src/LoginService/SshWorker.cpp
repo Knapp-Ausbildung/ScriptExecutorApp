@@ -345,7 +345,6 @@ bool SshWorker::validateGitRequest(const QString &urlText,
   return true;
 }
                      
-
 void SshWorker::cleanup() {
   if (m_keepAliveTimer != nullptr) {
     m_keepAliveTimer->stop();
@@ -389,7 +388,7 @@ void SshWorker::executeCommand(const QString &command) {
 
 // Zum Ausführen commands mit true | false option ob Pseudo-Terminal benutzt wird oder nicht
 void SshWorker::executeCommandInternal(const QString &command,
-                                       bool requestPty) {
+                                       bool requestPty, bool continueOnOutputLimit) {
     
     // Überprüfung für eingeloggt und verbunden sein
     if (m_session == nullptr || !m_connected || !m_loggedIn) {
@@ -462,6 +461,8 @@ void SshWorker::executeCommandInternal(const QString &command,
 
     QByteArray stdoutData;
     QByteArray stderrData;
+    bool outputTruncated = false;
+
     char buffer[4096];
 
     QString readError;
@@ -521,11 +522,15 @@ void SshWorker::executeCommandInternal(const QString &command,
 
         if(stdoutCount > 0) {
             if(stdoutData.size() + stderrData.size() + stdoutCount > maxOutputBytes) {
+              if (!continueOnOutputLimit) {
                 readError = "Command output exceeded the 1 MiB limit";
                 break;
+              }
+              outputTruncated = true;
+            } else {
+            stdoutData.append(buffer, stdoutCount);
             }
 
-            stdoutData.append(buffer, stdoutCount);
             promptBuffer.append(buffer, stdoutCount);
             receivedData = true;
 
@@ -547,11 +552,15 @@ void SshWorker::executeCommandInternal(const QString &command,
 
         if(stderrCount > 0) {
             if(stdoutData.size() + stderrData.size() + stderrCount > maxOutputBytes) {
+              if (!continueOnOutputLimit) {
                 readError = "Command output exceeded the 1MiB limit";
                 break;
+              }
+              outputTruncated = true;
+            } else {
+              stderrData.append(buffer, stderrCount);
             }
 
-            stderrData.append(buffer, stderrCount);
             promptBuffer.append(buffer, stderrCount);
             receivedData = true;
 
@@ -579,14 +588,19 @@ void SshWorker::executeCommandInternal(const QString &command,
                                                             QRegularExpression::CaseInsensitiveOption);
         static const QRegularExpression confirmationPrompt(R"re(execute prepared updates\s*\(y/n\)\?:?\s*$)re",
                                                            QRegularExpression::CaseInsensitiveOption);
+        static const QRegularExpression genericUsernamePrompt(R"(username:\s*$)",
+                                                              QRegularExpression::CaseInsensitiveOption);
         
         const bool askForGitUsername = helperUsernamePrompt.match(promptText).hasMatch() ||
                                        httpsUsernamePrompt.match(promptText).hasMatch();
         const bool askForGitPassword = gitPasswordPrompt.match(promptText).hasMatch();
         const bool askForOtherPassword = !askForGitPassword && otherPasswordPrompt.match(promptText).hasMatch();
         const bool askForConfirmation = confirmationPrompt.match(promptText).hasMatch();
+        const bool askForGenericUsername = genericUsernamePrompt.match(promptText).hasMatch();
 
-        if(!waitingForInput && (askForGitUsername || askForGitPassword || askForOtherPassword || askForConfirmation)) {
+        if(!waitingForInput && (askForGitUsername || askForGitPassword || 
+                                askForOtherPassword || askForConfirmation || 
+                                askForGenericUsername)) {
           waitingForInput = true;
           emit commandInputRequested(promptText.trimmed(), !askForGitUsername);
         }
@@ -661,6 +675,12 @@ void SshWorker::executeCommandInternal(const QString &command,
     const int exitStatus = ssh_channel_get_exit_status(channel);
     closeChannel();
 
+    if (outputTruncated) {
+    stdoutData.append(
+        "\n[Hinweis: Die lokal gespeicherte Befehlsausgabe ist auf 1 MiB begrenzt; "
+        "weitere Ausgabe wurde nicht gespeichert.]\n");
+    }
+
     emit commandCompleted(QString::fromUtf8(stdoutData),
                           QString::fromUtf8(stderrData),
                           exitStatus);
@@ -715,6 +735,12 @@ void SshWorker::executePresetCommand(const QString &commandId)
 
         emit commandFailed("Unkown predefined command");
         return;
+    }
+
+    if (commandId == "reinstallAll" ||
+        commandId == "reinstallKiSoft" ||
+        commandId == "reinstallDb") {
+      command = "sudo -v && " + command;
     }
 
     executeCommandInternal(command, requestPty);
@@ -1052,4 +1078,503 @@ void SshWorker::setActiveDirectory(const QString &type) {
   }
 
   m_activeRepositoryType = type;
+}
+
+void SshWorker::runOracleDataPump(bool restore) {
+  const QString schemas = QStringLiteral("LU,AFCONFIG,ARCHIVE,KLASSX,KXGUI,KXREPORT,USER_MANAGEMENT");
+
+  QString dataPumpCommand;
+
+  if (restore) {
+
+    dataPumpCommand = QStringLiteral("impdp BACKUPTOOL_USER@kxxl "
+                                     "PARFILE=\"$objects_parfile\"");
+  } else {
+    dataPumpCommand = QStringLiteral("expdp BACKUPTOOL_USER@kxxl "
+                                     "DIRECTORY=DATA_PUMP_DIR "
+                                     "DUMPFILE=kisoft_schemas_with_lu.dmp "
+                                     "SCHEMAS=%1 "
+                                     "NOLOGFILE=YES "
+                                     "REUSE_DUMPFILES=YES")
+                                     .arg(schemas);
+  }
+
+  if (!restore) {
+    const QString dumpScript = QStringLiteral(
+        "set -o pipefail\n"
+        "validate_backup_login() {\n"
+        "  local check_sql status\n"
+        "  check_sql=$(mktemp /tmp/scriptexecutor-logincheck.XXXXXX.sql) || return 1\n"
+        "  chmod 600 \"$check_sql\" || {\n"
+        "    rm -f -- \"$check_sql\"\n"
+        "    return 1\n"
+        "  }\n"
+        "  cat > \"$check_sql\" << 'SQL'\n"
+        "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+        "SELECT 1 FROM dual;\n"
+        "EXIT SUCCESS\n"
+        "SQL\n"
+        "  sqlplus -L BACKUPTOOL_USER@kxxl @\"$check_sql\"\n"
+        "  status=$?\n"
+        "  rm -f -- \"$check_sql\"\n"
+        "  return \"$status\"\n"
+        "}\n"
+        "if ! validate_backup_login; then\n"
+        "  echo 'BACKUPTOOL_USER-Anmeldung fehlgeschlagen. Dump abgebrochen.' >&2\n"
+        "  exit 93\n"
+        "fi\n"
+        "%1\n")
+        .arg(dataPumpCommand);
+
+    const QString encodedDumpScript = QString::fromLatin1(dumpScript.toUtf8().toBase64());
+
+    const QString oracleCommand = QStringLiteral("bash -lc \"$(printf '%s' %1 | base64 -d)\"")
+                                                .arg(quoteShellArgument(encodedDumpScript));
+
+    const QString command = QStringLiteral("sudo -iu oracle bash -lc %1")
+                                .arg(quoteShellArgument(oracleCommand));
+
+    executeCommandInternal(command, true);
+    return;
+  }
+
+  const QString grantSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                         "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                         "GRANT CREATE ANY TRIGGER TO BACKUPTOOL_USER;\n"
+                                         "EXIT\n");
+
+  const QString schemaDependencyGrantSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                                          "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                                          "GRANT SELECT ON SYS.V_$SESSION TO AFCONFIG;\n"
+                                                          "GRANT EXECUTE ON SYS.DBMS_AQ TO KLASSX;\n"
+                                                          "GRANT EXECUTE ON SYS.DBMS_AQADM TO KLASSX;\n"
+                                                          "GRANT EXECUTE ON SYS.DBMS_LOCK TO KLASSX;\n"
+                                                          "GRANT EXECUTE ON SYS.DBMS_CRYPTO TO USER_MANAGEMENT;\n"
+                                                          "GRANT SELECT ON SYS.DBA_FREE_SPACE TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.DBA_TEMP_FILES TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.DBA_DATA_FILES TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.DBA_OBJECTS TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$LOCK TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$PROCESS TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$SESSION TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$SESSION_WAIT TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$SQLAREA TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$TEMP_SPACE_HEADER TO KLASSX;\n"
+                                                          "GRANT SELECT ON SYS.V_$TEMP_EXTENT_POOL TO KLASSX;\n"
+                                                          "EXIT\n");
+
+  const QString revokeSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                          "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                          "DECLARE\n"
+                                          "  privilege_count PLS_INTEGER;\n"
+                                          "BEGIN\n"
+                                          "  SELECT COUNT(*) INTO privilege_count\n"
+                                          "  FROM dba_sys_privs\n"
+                                          "  WHERE grantee = 'BACKUPTOOL_USER'\n"
+                                          "    AND privilege = 'CREATE ANY TRIGGER';\n"
+                                          "  IF privilege_count > 0 THEN\n"
+                                          "    EXECUTE IMMEDIATE "
+                                          "'REVOKE CREATE ANY TRIGGER FROM BACKUPTOOL_USER';\n"
+                                          "  END IF;\n"
+                                          "\n"
+                                          "  SELECT COUNT(*) INTO privilege_count\n"
+                                          "  FROM dba_sys_privs\n"
+                                          "  WHERE grantee = 'BACKUPTOOL_USER'\n"
+                                          "    AND privilege = 'ADMINISTER DATABASE TRIGGER';\n"
+                                          "  IF privilege_count > 0 THEN\n"
+                                          "    EXECUTE IMMEDIATE "
+                                          "'REVOKE ADMINISTER DATABASE TRIGGER FROM BACKUPTOOL_USER';\n"
+                                          "  END IF;\n"
+                                          "\n"
+                                          "  SELECT COUNT(*) INTO privilege_count\n"
+                                          "  FROM dba_sys_privs\n"
+                                          "  WHERE grantee = 'KLASSX'\n"
+                                          "    AND privilege = 'ADMINISTER DATABASE TRIGGER';\n"
+                                          "  IF privilege_count > 0 THEN\n"
+                                          "    EXECUTE IMMEDIATE "
+                                          "'REVOKE ADMINISTER DATABASE TRIGGER FROM KLASSX';\n"
+                                          "  END IF;\n"
+                                          "END;\n"
+                                          "/\n"
+                                          "EXIT\n");
+
+const QString resetSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                        "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                        "DECLARE\n"
+                                        "  dump_exists BOOLEAN;\n"
+                                        "  dump_length NUMBER;\n"
+                                        "  block_size BINARY_INTEGER;\n"
+                                        "  session_count PLS_INTEGER;\n"
+                                        "\n"
+                                        "  PROCEDURE lock_user_if_exists(p_username VARCHAR2) IS\n"
+                                        "    user_count PLS_INTEGER;\n"
+                                        "  BEGIN\n"
+                                        "    SELECT COUNT(*) INTO user_count\n"
+                                        "    FROM dba_users WHERE username = p_username;\n"
+                                        "    IF user_count > 0 THEN\n"
+                                        "      EXECUTE IMMEDIATE 'ALTER USER ' ||\n"
+                                        "        DBMS_ASSERT.SIMPLE_SQL_NAME(p_username) || ' ACCOUNT LOCK';\n"
+                                        "    END IF;\n"
+                                        "  END;\n"
+                                        "\n"
+                                        "  PROCEDURE drop_user_if_exists(p_username VARCHAR2) IS\n"
+                                        "  BEGIN\n"
+                                        "    EXECUTE IMMEDIATE 'DROP USER ' ||\n"
+                                        "      DBMS_ASSERT.SIMPLE_SQL_NAME(p_username) || ' CASCADE';\n"
+                                        "  EXCEPTION\n"
+                                        "    WHEN OTHERS THEN\n"
+                                        "      IF SQLCODE = -1918 THEN\n"
+                                        "        NULL;\n"
+                                        "      ELSIF SQLCODE = -1940 THEN\n"
+                                        "        RAISE_APPLICATION_ERROR(-20003,\n"
+                                        "          'User ' || p_username || ' ist noch verbunden', TRUE);\n"
+                                        "      ELSE\n"
+                                        "        RAISE;\n"
+                                        "      END IF;\n"
+                                        "  END;\n"
+                                        "BEGIN\n"
+                                        "  UTL_FILE.FGETATTR('DATA_PUMP_DIR', 'kisoft_schemas_with_lu.dmp',\n"
+                                        "                    dump_exists, dump_length, block_size);\n"
+                                        "  IF NOT dump_exists OR dump_length = 0 THEN\n"
+                                        "    RAISE_APPLICATION_ERROR(-20001,\n"
+                                        "      'Dump fehlt oder ist leer; Restore abgebrochen');\n"
+                                        "  END IF;\n"
+                                        "\n"
+                                        "  lock_user_if_exists('AFCONFIG');\n"
+                                        "  lock_user_if_exists('ARCHIVE');\n"
+                                        "  lock_user_if_exists('KLASSX');\n"
+                                        "  lock_user_if_exists('KXGUI');\n"
+                                        "  lock_user_if_exists('KXREPORT');\n"
+                                        "  lock_user_if_exists('USER_MANAGEMENT');\n"
+                                        "  lock_user_if_exists('LU');\n"
+                                        "\n"
+                                        "  FOR s IN (\n"
+                                        "    SELECT sid, serial# FROM v$session\n"
+                                        "    WHERE username IN ('AFCONFIG','ARCHIVE','KLASSX','KXGUI',\n"
+                                        "                       'KXREPORT','USER_MANAGEMENT','LU')\n"
+                                        "  ) LOOP\n"
+                                        "    BEGIN\n"
+                                        "      EXECUTE IMMEDIATE 'ALTER SYSTEM KILL SESSION ''' ||\n"
+                                        "        s.sid || ',' || s.serial# || ''' IMMEDIATE';\n"
+                                        "    EXCEPTION\n"
+                                        "      WHEN OTHERS THEN\n"
+                                        "        IF SQLCODE NOT IN (-31, -26) THEN RAISE; END IF;\n"
+                                        "    END;\n"
+                                        "  END LOOP;\n"
+                                        "\n"
+                                        "  FOR attempt IN 1..30 LOOP\n"
+                                        "    SELECT COUNT(*) INTO session_count FROM v$session\n"
+                                        "    WHERE username IN ('AFCONFIG','ARCHIVE','KLASSX','KXGUI',\n"
+                                        "                       'KXREPORT','USER_MANAGEMENT','LU');\n"
+                                        "    EXIT WHEN session_count = 0;\n"
+                                        "    DBMS_LOCK.SLEEP(1);\n"
+                                        "  END LOOP;\n"
+                                        "\n"
+                                        "  SELECT COUNT(*) INTO session_count FROM v$session\n"
+                                        "  WHERE username IN ('AFCONFIG','ARCHIVE','KLASSX','KXGUI',\n"
+                                        "                     'KXREPORT','USER_MANAGEMENT','LU');\n"
+                                        "  IF session_count > 0 THEN\n"
+                                        "    RAISE_APPLICATION_ERROR(-20002,\n"
+                                        "      'Schema-Reset abgebrochen: Es sind noch Datenbanksitzungen aktiv');\n"
+                                        "  END IF;\n"
+                                        "\n"
+                                        "  drop_user_if_exists('AFCONFIG');\n"
+                                        "  drop_user_if_exists('ARCHIVE');\n"
+                                        "  drop_user_if_exists('KLASSX');\n"
+                                        "  drop_user_if_exists('KXGUI');\n"
+                                        "  drop_user_if_exists('KXREPORT');\n"
+                                        "  drop_user_if_exists('USER_MANAGEMENT');\n"
+                                        "  drop_user_if_exists('LU');\n"
+                                        "END;\n"
+                                        "/\n"
+                                        "EXIT\n");
+
+const QString postImportSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                            "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                            "GRANT ADMINISTER DATABASE TRIGGER TO KLASSX;\n"
+                                            "CREATE OR REPLACE EDITIONABLE TRIGGER \"KLASSX\".\"T_LOGON\"\n"
+                                            "  AFTER LOGON ON DATABASE WHEN (USER IN "
+                                            "('ARCHIVE','KLASSX','KXGUI','KXREPORT','LU','USER_MANAGEMENT')) BEGIN\n"
+                                            "  EXECUTE IMMEDIATE q'|ALTER SESSION SET PLSQL_WARNINGS =\n"
+                                            "      'ENABLE:ALL'\n"
+                                            "      ,'DISABLE:05003'\n"
+                                            "      ,'DISABLE:05004'\n"
+                                            "      ,'DISABLE:05005'\n"
+                                            "      ,'DISABLE:05018'\n"
+                                            "      ,'DISABLE:05019'\n"
+                                            "      ,'DISABLE:06009'\n"
+                                            "      ,'DISABLE:06010'\n"
+                                            "      ,'DISABLE:06020'\n"
+                                            "      ,'DISABLE:07202'\n"
+                                            "      ,'DISABLE:07203'\n"
+                                            "      ,'DISABLE:07204'\n"
+                                            "      ,'DISABLE:07206'\n"
+                                            "      ,'DISABLE:07207'\n"
+                                            "      |';\n"
+                                            "  EXECUTE IMMEDIATE 'ALTER SESSION SET RECYCLEBIN = OFF';\n"
+                                            "  $IF dbms_db_version.ver_le_12_1 $THEN\n"
+                                            "    EXECUTE IMMEDIATE 'ALTER SESSION SET plscope_settings = ''IDENTIFIERS:ALL''';\n"
+                                            "  $ELSE\n"
+                                            "    EXECUTE IMMEDIATE 'ALTER SESSION SET plscope_settings = ''IDENTIFIERS:ALL, STATEMENTS:NONE''';\n"
+                                            "  $END\n"
+                                            "END t_logon;\n"
+                                            "/\n"
+                                            "ALTER TRIGGER \"KLASSX\".\"T_LOGON\" ENABLE;\n"
+                                            "REVOKE ADMINISTER DATABASE TRIGGER FROM KLASSX;\n"
+                                            "BEGIN\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('LU', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('AFCONFIG', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('ARCHIVE', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('KLASSX', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('KXGUI', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('KXREPORT', FALSE);\n"
+                                            "  DBMS_UTILITY.COMPILE_SCHEMA('USER_MANAGEMENT', FALSE);\n"
+                                            "END;\n"
+                                            "/\n"
+                                            "DECLARE\n"
+                                            "  invalid_count PLS_INTEGER;\n"
+                                            "BEGIN\n"
+                                            "  SELECT COUNT(*) INTO invalid_count\n"
+                                            "  FROM dba_objects\n"
+                                            "  WHERE status = 'INVALID'\n"
+                                            "    AND owner IN ('LU','AFCONFIG','ARCHIVE','KLASSX','KXGUI',\n"
+                                            "                  'KXREPORT','USER_MANAGEMENT');\n"
+                                            "  IF invalid_count > 0 THEN\n"
+                                            "    RAISE_APPLICATION_ERROR(-20004,\n"
+                                            "      invalid_count || ' ungültige Objekte nach dem Import');\n"
+                                            "  END IF;\n"
+                                            "END;\n"
+                                            "/\n"
+                                            "EXIT\n");
+
+const QString validateImportedSchemasSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                                           "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                                           "DECLARE\n"
+                                                           "  missing_count PLS_INTEGER;\n"
+                                                           "BEGIN\n"
+                                                           "  SELECT COUNT(*) INTO missing_count\n"
+                                                           "  FROM (\n"
+                                                           "    SELECT 'LU' username FROM dual UNION ALL\n"
+                                                           "    SELECT 'AFCONFIG' FROM dual UNION ALL\n"
+                                                           "    SELECT 'ARCHIVE' FROM dual UNION ALL\n"
+                                                           "    SELECT 'KLASSX' FROM dual UNION ALL\n"
+                                                           "    SELECT 'KXGUI' FROM dual UNION ALL\n"
+                                                           "    SELECT 'KXREPORT' FROM dual UNION ALL\n"
+                                                           "    SELECT 'USER_MANAGEMENT' FROM dual\n"
+                                                           "  ) expected\n"
+                                                           "  WHERE NOT EXISTS (\n"
+                                                           "    SELECT 1 FROM dba_users actual\n"
+                                                           "    WHERE actual.username = expected.username\n"
+                                                           "  );\n"
+                                                           "  IF missing_count > 0 THEN\n"
+                                                           "    RAISE_APPLICATION_ERROR(-20005,\n"
+                                                           "      missing_count || ' Schemas fehlen nach dem Import');\n"
+                                                           "  END IF;\n"
+                                                           "END;\n"
+                                                           "/\n"
+                                                           "EXIT\n");
+
+const QString schemaUserImportParameterFile = QStringLiteral("DIRECTORY=DATA_PUMP_DIR\n"
+                                                             "DUMPFILE=kisoft_schemas_with_lu.dmp\n"
+                                                             "NOLOGFILE=YES\n"
+                                                             "SCHEMAS=%1\n"
+                                                             "CONTENT=METADATA_ONLY\n"
+                                                             "INCLUDE=USER\n")
+                                                             .arg(schemas);
+                                                             
+const QString schemaObjectsImportParameterFile = QStringLiteral("DIRECTORY=DATA_PUMP_DIR\n"
+                                                                "DUMPFILE=kisoft_schemas_with_lu.dmp\n"
+                                                                "NOLOGFILE=YES\n"
+                                                                "SCHEMAS=%1\n"
+                                                                "EXCLUDE=USER\n"
+                                                                "EXCLUDE=TRIGGER:\"='T_LOGON'\"\n")
+                                                                .arg(schemas);
+
+const QString encodedGrantSql = QString::fromLatin1(grantSql.toUtf8().toBase64());
+const QString encodedSchemaDependencyGrantSql = QString::fromLatin1(schemaDependencyGrantSql.toUtf8().toBase64());
+const QString encodedRevokeSql = QString::fromLatin1(revokeSql.toUtf8().toBase64());
+const QString encodeResetSql = QString::fromLatin1(resetSql.toUtf8().toBase64());
+const QString encodePostImportSql = QString::fromLatin1(postImportSql.toUtf8().toBase64());
+const QString encodeValidateImportedSchemasSql = QString::fromLatin1(validateImportedSchemasSql.toUtf8().toBase64());
+const QString encodeSchemaUserImportParameterFile = QString::fromLatin1(schemaUserImportParameterFile.toUtf8().toBase64());
+const QString encodeSchemaObjectsImportParameterFile = QString::fromLatin1(schemaObjectsImportParameterFile.toUtf8().toBase64());
+
+const QString restoreScriptTemplate = QStringLiteral("set -o pipefail\n"
+                                            "users_parfile=\"\"\n"
+                                            "objects_parfile=\"\"\n"
+                                            "grant_trigger_privileges() {\n"
+                                            "  printf '%s' %1 | base64 -d | sqlplus -s / as sysdba\n"
+                                            "}\n"
+                                            "revoke_trigger_privileges() {\n"
+                                            "  printf '%s' %2 | base64 -d | sqlplus -s / as sysdba\n"
+                                            "}\n"
+                                            "reset_schemas() {\n"
+                                            "  printf '%s' %3 | base64 -d | sqlplus -s / as sysdba\n"
+                                            "}\n"
+                                            "post_import_setup() {\n"
+                                            " printf '%s' %4 | base64 -d | sqlplus -s / as sysdba\n"                                           
+                                            "}\n"
+                                            "validate_imported_schemas() {\n"
+                                            "  printf '%s' %9 | base64 -d | sqlplus -s / as sysdba\n"
+                                            "}\n"
+                                            "grant_schema_dependencies() {\n"
+                                            "  printf '%s' %8 | base64 -d | sqlplus -s / as sysdba\n"
+                                            "}\n"
+                                            "cleanup() {\n"
+                                            "  original_status=$?\n"
+                                            "  trap - EXIT\n"
+                                            "  if ! revoke_trigger_privileges; then\n"
+                                            "    echo 'Fehler: Temporäre Trigger-Rechte konnten nicht entzogen werden.' >&2\n"
+                                            "    exit 90\n"
+                                            "  fi\n"
+                                            "  if { [ -n \"$users_parfile\" ] && ! rm -f -- \"$users_parfile\"; } || "
+                                            "{ [ -n \"$objects_parfile\" ] && ! rm -f -- \"$objects_parfile\"; }; then\n"
+                                            "    echo 'Fehler: Temporäre Data-Pump-Parameterdatei konnte nicht entfernt werden.' >&2\n"
+                                            "    exit 89\n"
+                                            "  fi\n"
+                                            "  exit \"$original_status\"\n"
+                                            "}\n"
+                                            "validate_backup_login() {\n"
+                                            "local check_sql status\n"
+                                            "check_sql=$(mktemp /tmp/scriptexecutor-logincheck.XXXXXX.sql) || return 1\n"
+                                            "chmod 600 \"$check_sql\" || {\n"
+                                            "rm -f -- \"$check_sql\"\n"
+                                            "return 1\n"
+                                            "}\n"
+                                            "cat > \"$check_sql\" << 'SQL'\n"
+                                            "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                            "SELECT 1 FROM dual;\n"
+                                            "EXIT SUCCESS\n"
+                                            "SQL\n"
+                                            "sqlplus -L -s BACKUPTOOL_USER@kxxl @\"$check_sql\"\n"
+                                            "status=$?\n"
+                                            "rm -f -- \"$check_sql\"\n"
+                                            "return \"$status\"\n"
+                                            "}\n"
+                                            "trap cleanup EXIT\n"
+                                            "trap 'exit 129' HUP\n"
+                                            "trap 'exit 130' INT\n"
+                                            "trap 'exit 143' TERM\n"
+                                            "grant_trigger_privileges || exit $?\n"
+                                            "if ! validate_backup_login; then\n"
+                                            " echo 'BACKUPTOOL_USER-Anmeldung fehlgeschlagen. Restore vor dem Schema-Reset abgebrochen. ' >&2\n"
+                                            " exit 93\n"
+                                            "fi\n"
+                                            "reset_schemas || { echo 'Schema-Reset fehlgeschlagen; Import abgebrochen.' >&2; exit 1; }\n"
+                                            "users_parfile=$(mktemp /tmp/scriptexecutor-restore-users.XXXXXX.par) || exit 92\n"
+                                            "objects_parfile=$(mktemp /tmp/scriptexecutor-restore-objects.XXXXXX.par) || exit 92\n"
+                                            "printf '%s' %5 | base64 -d > \"$users_parfile\" || exit 92\n"
+                                            "printf '%s' %6 | base64 -d > \"$objects_parfile\" || exit 92\n"
+                                            "impdp BACKUPTOOL_USER@kxxl PARFILE=\"$users_parfile\"\n"
+                                            "users_import_status=$?\n"
+                                            "if [ \"$users_import_status\" -ne 0 ]; then exit \"$users_import_status\"; fi\n"
+                                            "if ! validate_imported_schemas; then\n"
+                                            "  echo 'Schema-User-Import unvollständig; weitere Import-Schritte werden übersprungen.' >&2\n"
+                                            "  exit 92\n"
+                                            "fi\n"
+                                            "grant_schema_dependencies || exit $?\n"
+                                            "%7\n"
+                                            "import_status=$?\n"
+                                            "if [ \"$import_status\" -ne 0 ]; then exit \"$import_status\"; fi\n"
+                                            "post_import_setup || exit 91\n"
+                                            "exit \"$import_status\"\n")
+                                            .arg(quoteShellArgument(encodedGrantSql))
+                                            .arg(quoteShellArgument(encodedRevokeSql))
+                                            .arg(quoteShellArgument(encodeResetSql))
+                                            .arg(quoteShellArgument(encodePostImportSql))
+                                            .arg(quoteShellArgument(encodeSchemaUserImportParameterFile))
+                                            .arg(quoteShellArgument(encodeSchemaObjectsImportParameterFile))
+                                            .arg(dataPumpCommand)
+                                            .arg(quoteShellArgument(encodedSchemaDependencyGrantSql))
+                                            .arg(quoteShellArgument(encodeValidateImportedSchemasSql));
+
+const QString restoreScript = restoreScriptTemplate;
+    
+const QString encodedRestoreScript = QString::fromLatin1(restoreScript.toUtf8().toBase64());
+
+const QString oracleCommand = QStringLiteral("bash -lc \"$(printf '%s' %1 | base64 -d)\"")
+                                            .arg(quoteShellArgument(encodedRestoreScript));
+const QString command = QStringLiteral("sudo -iu oracle bash -lc %1")
+                                      .arg(quoteShellArgument(oracleCommand));
+  
+  executeCommandInternal(command, true, true);
+}
+
+void SshWorker::createOracleBackupUser() {
+  const QString sql = QStringLiteral("SET ECHO OFF\n"
+                                    "SET VERIFY OFF\n"
+                                    "SET FEEDBACK OFF\n"
+                                    "SET HEADING OFF\n"
+                                    "SET PAGESIZE 0\n"
+                                    "WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                                    "ALTER SESSION SET CONTAINER = KXXL;\n"
+                                    "ACCEPT NEW_PASSWORD CHAR PROMPT "
+                                    "'New password for BACKUPTOOL_USER: ' HIDE\n"
+                                    "ACCEPT CONFIRM_PASSWORD CHAR PROMPT "
+                                    "'Confirm password for BACKUPTOOL_USER: ' HIDE\n"
+                                    "DECLARE\n"
+                                    "  user_count PLS_INTEGER;\n"
+                                    "BEGIN\n"
+                                    "  IF '&&NEW_PASSWORD' != '&&CONFIRM_PASSWORD' THEN\n"
+                                    "    RAISE_APPLICATION_ERROR(-20001, 'Passwords do not match');\n"
+                                    "  END IF;\n"
+                                    "\n"
+                                    "  SELECT COUNT(*) INTO user_count\n"
+                                    "  FROM dba_users\n"
+                                    "  WHERE username = 'BACKUPTOOL_USER';\n"
+                                    "\n"
+                                    "  IF user_count = 0 THEN\n"
+                                    "    EXECUTE IMMEDIATE\n"
+                                    "      'CREATE USER BACKUPTOOL_USER IDENTIFIED BY \"' ||\n"
+                                    "      '&&NEW_PASSWORD' || '\"';\n"
+                                    "    EXECUTE IMMEDIATE 'GRANT CONNECT, RESOURCE TO BACKUPTOOL_USER';\n"
+                                    "    EXECUTE IMMEDIATE 'GRANT DATAPUMP_EXP_FULL_DATABASE TO BACKUPTOOL_USER';\n"
+                                    "    EXECUTE IMMEDIATE 'GRANT DATAPUMP_IMP_FULL_DATABASE TO BACKUPTOOL_USER';\n"
+                                    "    EXECUTE IMMEDIATE 'GRANT READ, WRITE ON DIRECTORY DATA_PUMP_DIR TO BACKUPTOOL_USER';\n"
+                                    "    EXECUTE IMMEDIATE 'GRANT UNLIMITED TABLESPACE TO BACKUPTOOL_USER';\n"
+                                    "  END IF;\n"
+                                    "END;\n"
+                                    "/\n"
+                                    "SELECT 'BACKUPTOOL_USER_CREATED' FROM dual;\n"
+                                    "UNDEFINE NEW_PASSWORD\n"
+                                    "UNDEFINE CONFIRM_PASSWORD\n"
+                                    "EXIT\n");
+  
+  const QString command = QStringLiteral("script=$(mktemp /tmp/scriptexecutor-user.XXXXXX.sql) || exit 1; "
+                                        "trap 'rm -f -- \"$script\"' EXIT HUP INT TERM; "
+                                        "chmod 644 \"$script\" || exit 1; "
+                                        "cat > \"$script\" <<'__ORACLE_SQL__'\n") 
+                                        + sql 
+                                        + QStringLiteral(
+                                                        "__ORACLE_SQL__\n"
+                                                        "sudo -iu oracle bash -lc \"sqlplus -s / as sysdba @$script\"");
+
+    executeCommandInternal(command, true);        
+}
+
+void SshWorker::checkOracleBackupUser() {
+  const QString sql =
+      QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
+                     "ALTER SESSION SET CONTAINER = KXXL;\n"
+                     "SELECT CASE WHEN EXISTS (\n"
+                     "  SELECT 1 FROM dba_users "
+                     "WHERE username = 'BACKUPTOOL_USER'\n"
+                     ") THEN 'BACKUPTOOL_USER_EXISTS'\n"
+                     "  ELSE 'BACKUPTOOL_USER_MISSING'\n"
+                     "END FROM dual;\n"
+                     "EXIT\n");
+
+  const QString encodedSql =
+      QString::fromLatin1(sql.toUtf8().toBase64());
+
+  const QString oracleCommand =
+      QStringLiteral("printf '%s' %1 | base64 -d | "
+                     "sqlplus -s / as sysdba")
+          .arg(quoteShellArgument(encodedSql));
+
+  const QString command =
+      QStringLiteral("sudo -iu oracle bash -lc %1")
+          .arg(quoteShellArgument(oracleCommand));
+
+  executeCommandInternal(command, true);
 }

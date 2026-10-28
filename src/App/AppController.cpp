@@ -67,7 +67,58 @@ AppController::AppController(QObject *parent)
           this, [this] (const QString &standardOutput,
                         const QString &standardError,
                         int exitStatus) {
-        
+    if (m_checkingOracleBackupUser) {
+      m_checkingOracleBackupUser = false;
+
+      if (exitStatus != 0) {
+        emit commandFailed(standardError.trimmed().isEmpty()
+                           ? QStringLiteral("Oracle-Benutzerprüfung fehlgeschlagen")
+                           : standardError.trimmed());
+        return;
+      }
+
+      if (standardOutput.contains(QStringLiteral("BACKUPTOOL_USER_EXISTS"))) {
+
+        emit commandOutputReceived(
+    m_pendingOracleRestore
+        ? QStringLiteral("[Debug] Benutzerprüfung erfolgreich; starte impdp.\n")
+        : QStringLiteral("[Debug] Benutzerprüfung erfolgreich; starte expdp.\n"));
+        m_loginService->runOracleDataPump(m_pendingOracleRestore);
+        return;
+      }
+
+      if (standardOutput.contains(QStringLiteral("BACKUPTOOL_USER_MISSING"))) {
+        m_creatingOracleBackupUser = true;
+        m_loginService->createOracleBackupUser();
+        return;
+      }
+
+    emit commandFailed(QStringLiteral("Oracle-Prüfung: Exit %1\nSTDOUT:\n%2\nSTDERR:\n%3")
+                      .arg(exitStatus)
+                      .arg(standardOutput.trimmed())
+                      .arg(standardError.trimmed()));
+    return;
+}
+
+if (m_creatingOracleBackupUser) {
+  m_creatingOracleBackupUser = false;
+
+  if (exitStatus != 0) {
+    emit commandFailed(standardError.trimmed().isEmpty()
+                       ? QStringLiteral("BACKUPTOOL_USER konnte nicht angelegt werden")
+                       : standardError.trimmed());
+    return;
+  }
+
+  if (!standardOutput.contains(QStringLiteral("BACKUPTOOL_USER_CREATED"))) {
+    emit commandFailed(QStringLiteral("Die Benutzeranlage lieferte kein erwartetes Ergebnis"));
+    return;
+  }
+
+  m_loginService->runOracleDataPump(m_pendingOracleRestore);
+  return;
+}
+
     if (m_loadingInstalledRepositoryOrigin) {
       m_loadingInstalledRepositoryOrigin = false;
 
@@ -238,6 +289,9 @@ AppController::AppController(QObject *parent)
           this, [this](const QString &message) {
       m_repositoryTypeToActivateAfterReplace.clear();
 
+      m_checkingOracleBackupUser = false;
+      m_creatingOracleBackupUser = false;
+
       if (m_loadingInstalledRepositoryInfo) {
         m_loadingInstalledRepositoryInfo = false;
         m_refreshInstalledRepositoryAfterCommand = false;
@@ -265,6 +319,9 @@ AppController::AppController(QObject *parent)
   connect(m_loginService, &LoginService::commandCancelled,
           this, [this]() {
 
+    m_checkingOracleBackupUser = false;
+    m_creatingOracleBackupUser = false;
+    
     m_repositoryTypeToActivateAfterReplace.clear();
 
     if (m_loadingInstalledRepositoryInfo) {
@@ -612,4 +669,26 @@ void AppController::selectInstallRepository(const QString &type) {
 bool AppController::isKiSoftOneActive() const {
   return m_installedRepositoryInfoLoaded &&
          m_activeRepositoryType == QStringLiteral("KiSoft-One");
+}
+
+void AppController::createOracleDump() {
+  if (!m_loginService->getLoggedIn()) {
+    emit commandFailed(QStringLiteral("Keine SSH-Verbindung"));
+    return;
+  }
+  
+  m_checkingOracleBackupUser = true;
+  m_pendingOracleRestore = false;
+  m_loginService->checkOracleBackupUser();
+
+}
+void AppController::restoreOracleDump()  {
+    if (!m_loginService->getLoggedIn()) {
+      emit commandFailed(QStringLiteral("Keine SSH-Verbindung"));
+      return;
+    }
+
+    m_checkingOracleBackupUser = true;
+    m_pendingOracleRestore = true;
+    m_loginService->checkOracleBackupUser();
 }
