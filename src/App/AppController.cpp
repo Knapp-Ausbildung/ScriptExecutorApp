@@ -518,6 +518,49 @@ void AppController::openLogsFolder() {
   }
 }
 
+void AppController::openInstalledRepository() {
+  const QString remote = m_installedRepository.trimmed();
+  QUrl repositoryUrl(remote);
+
+  if (repositoryUrl.scheme() == QStringLiteral("ssh")) {
+    repositoryUrl.setScheme(QStringLiteral("https"));
+    repositoryUrl.setPort(-1);
+    repositoryUrl.setUserInfo(QString());
+  } else if (!remote.contains(QStringLiteral("://"))) {
+    const int at = remote.indexOf(QLatin1Char('@'));
+    const int colon = remote.indexOf(QLatin1Char(':'), at + 1);
+    if (at > 0 && colon > at + 1) {
+      repositoryUrl = QUrl();
+      repositoryUrl.setScheme(QStringLiteral("https"));
+      repositoryUrl.setHost(remote.mid(at + 1, colon - at - 1));
+      repositoryUrl.setPath(QLatin1Char('/') + remote.mid(colon + 1));
+    }
+  }
+
+  QString repositoryPath = repositoryUrl.path(QUrl::FullyDecoded);
+  if (repositoryPath.endsWith(QStringLiteral(".git"))) {
+    repositoryPath.chop(4);
+    repositoryUrl.setPath(repositoryPath);
+  }
+
+  if (!repositoryUrl.isValid() ||
+      repositoryUrl.scheme() != QStringLiteral("https") ||
+      repositoryUrl.host().isEmpty() ||
+      !repositoryUrl.userInfo().isEmpty()) {
+    const QString message = QStringLiteral("Installierter Repository-Link ist ungültig");
+    qWarning() << message;
+    emit commandFailed(message);
+    return;
+  }
+
+  if (!QDesktopServices::openUrl(repositoryUrl)) {
+    const QString message =
+        QStringLiteral("Installierter Repository-Link konnte nicht geöffnet werden");
+    qWarning() << message;
+    emit commandFailed(message);
+  }
+}
+
 bool AppController::sendRepoLink(const QString &repoLink) {
   const QUrl url(repoLink.trimmed());
 

@@ -721,7 +721,7 @@ void SshWorker::executePresetCommand(const QString &commandId)
        
         requestPty = true;
         command = "bash -lc 'cd \"$WCS_ROOT/\" && make release && "
-                  "cd \"$WCS_ROOT\" && updateParameterTables'";
+                  "cd \"$WCS_ROOT/lager\" && updateParameterTables -b core_backup/'";
 
     } else if (commandId == "reinstallAll") {
         

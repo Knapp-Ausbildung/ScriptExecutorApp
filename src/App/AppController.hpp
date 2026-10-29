@@ -84,6 +84,7 @@ public slots: // public slots sind für QML aufrufbar.
   void submitCommandInput(const QString &input);
 
   void openLogsFolder();
+  void openInstalledRepository();
 
   bool sendRepoLink(const QString &repoLink);
   

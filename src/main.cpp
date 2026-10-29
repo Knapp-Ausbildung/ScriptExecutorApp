@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QCoreApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 
@@ -14,6 +15,8 @@ int main(int argc, char *argv[]) {
   set_qt_environment();
 
   QGuiApplication app(argc, argv);
+  QCoreApplication::setApplicationVersion(
+      QStringLiteral(SCRIPT_EXECUTOR_APP_VERSION));
 
   // Engine für QML
   QQmlApplicationEngine engine;

@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.21.1)
 option(LINK_INSIGHT "Link Qt Insight Tracker library" ON)
 option(BUILD_QDS_COMPONENTS "Build design studio components" ON)
 
-project(ScriptExecutorApp LANGUAGES CXX)
+project(ScriptExecutorApp VERSION 1.0 LANGUAGES CXX)
 
 set(CMAKE_AUTOMOC ON)
 
@@ -44,6 +44,10 @@ target_link_libraries(ScriptExecutorApp PRIVATE
     Qt6::Gui
     Qt6::Qml
     Qt6::Quick
+)
+
+target_compile_definitions(ScriptExecutorApp PRIVATE
+    SCRIPT_EXECUTOR_APP_VERSION=\"${PROJECT_VERSION}\"
 )
 
 # LIB SSH
