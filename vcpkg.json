@@ -1,0 +1,10 @@
+{
+  "name": "script-executor-app",
+  "version-string": "1.0.0",
+  "dependencies": [
+    {
+      "name": "libssh",
+      "default-features": false
+    }
+  ]
+}

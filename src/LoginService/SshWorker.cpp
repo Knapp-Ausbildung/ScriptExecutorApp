@@ -9,8 +9,10 @@
 #include <QUrl>
 #include <QFileInfo>
 #include <QDir>
+#include <QProcess>
 #include <QSet>
 #include <QStringList>
+#include <QStandardPaths>
 
 
 #include <cstddef>
@@ -26,20 +28,15 @@ namespace {
       return "'" + quoted + "'";
   }
 
-  bool getServerFingerprint(ssh_session session, QString &fingerprint) {
-      ssh_key serverKey = nullptr;
-
-      if (ssh_get_server_publickey(session, &serverKey) != SSH_OK) {
+  bool getKeyFingerprint(ssh_key key, QString &fingerprint) {
+      if (key == nullptr) {
         return false;
       }
-
       unsigned char *hash = nullptr;
       size_t hashLength = 0;
 
-      if(ssh_get_publickey_hash(serverKey, SSH_PUBLICKEY_HASH_SHA256, 
+      if(ssh_get_publickey_hash(key, SSH_PUBLICKEY_HASH_SHA256,
                                 &hash, &hashLength) != SSH_OK) {
-        
-        ssh_key_free(serverKey);
         return false;
       }
 
@@ -47,7 +44,6 @@ namespace {
         ssh_get_fingerprint_hash(SSH_PUBLICKEY_HASH_SHA256, hash, hashLength);
 
       ssh_clean_pubkey_hash(&hash);
-      ssh_key_free(serverKey);
 
       if (fingerprintText == nullptr) {
         return false;
@@ -57,6 +53,65 @@ namespace {
       ssh_string_free_char(fingerprintText);
       return true;
     }
+
+  bool getServerFingerprint(ssh_session session, QString &fingerprint) {
+      ssh_key serverKey = nullptr;
+      if (ssh_get_server_publickey(session, &serverKey) != SSH_OK) {
+        return false;
+      }
+
+      const bool fingerprintRead = getKeyFingerprint(serverKey, fingerprint);
+      ssh_key_free(serverKey);
+      return fingerprintRead;
+  }
+
+  bool getStoredHostFingerprint(ssh_session session, QString &fingerprint) {
+      ssh_knownhosts_entry *entry = nullptr;
+      const auto status = ssh_session_get_known_hosts_entry(session, &entry);
+      if (entry == nullptr) {
+        return false;
+      }
+
+      const bool fingerprintRead = getKeyFingerprint(entry->publickey, fingerprint);
+      ssh_knownhosts_entry_free(entry);
+      return status != SSH_KNOWN_HOSTS_ERROR && fingerprintRead;
+  }
+
+  bool removeStoredHostKey(const QString &host, int port, QString &error) {
+      const QString sshKeygenPath =
+          QStandardPaths::findExecutable(QStringLiteral("ssh-keygen"));
+      if (sshKeygenPath.isEmpty()) {
+        error = QStringLiteral("ssh-keygen was not found; the old host key was not changed");
+        return false;
+      }
+
+      const QString knownHostsName = port == 22
+          ? host
+          : QStringLiteral("[%1]:%2").arg(host).arg(port);
+
+      QProcess process;
+      process.start(sshKeygenPath, {QStringLiteral("-R"), knownHostsName});
+      if (!process.waitForStarted(5000)) {
+        error = QStringLiteral("Could not start ssh-keygen: %1").arg(process.errorString());
+        return false;
+      }
+      if (!process.waitForFinished(10000)) {
+        process.kill();
+        process.waitForFinished();
+        error = QStringLiteral("Timed out while replacing the stored SSH host key");
+        return false;
+      }
+      if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        const QString details = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
+        error = QStringLiteral("Could not remove the old SSH host key");
+        if (!details.isEmpty()) {
+          error += QStringLiteral(": ") + details;
+        }
+        return false;
+      }
+
+      return true;
+  }
 
   QString repositoryPathForType(const QString &type)
   {
@@ -106,7 +161,7 @@ namespace {
 
 SshWorker::SshWorker(QObject *parent) : QObject(parent) {
   m_keepAliveTimer = new QTimer(this);
-  m_keepAliveTimer->setInterval(30'000);
+  m_keepAliveTimer->setInterval(10'000);
 
   connect(m_keepAliveTimer, &QTimer::timeout,
           this, &SshWorker::checkConnection);
@@ -152,25 +207,37 @@ void SshWorker::login(const QString &host,
 
   // Überprüfen des Server-Keys BEVOR Zugangsdaten gesendet werden
   const auto hostStatus = ssh_session_is_known_server(m_session);
+  const bool hostKeyChanged = hostStatus == SSH_KNOWN_HOSTS_CHANGED ||
+                              hostStatus == SSH_KNOWN_HOSTS_OTHER;
 
   if (hostStatus == SSH_KNOWN_HOSTS_UNKNOWN || 
-      hostStatus == SSH_KNOWN_HOSTS_NOT_FOUND) {
+      hostStatus == SSH_KNOWN_HOSTS_NOT_FOUND ||
+      hostKeyChanged) {
     // Bei unbekanntem Key Fingerprint anzeigen und Besätigung verlangen
     QString fingerprint;
+    QString previousFingerprint;
 
     if (!getServerFingerprint(m_session, fingerprint)) {
       failLogin("Could not read the server host-key fingerprint");
       return;
     }
+    if (hostKeyChanged) {
+      getStoredHostFingerprint(m_session, previousFingerprint);
+    }
+
     // Passwort speichern bis Dialog beantwortet wurde
     m_pendingPassword = password;
     m_waitingForHostKeyConfirmation = true;
+    m_pendingHostKeyChanged = hostKeyChanged;
+    m_pendingHost = host;
+    m_pendingPort = port;
 
-    emit hostKeyConfirmationRequested(host, port, fingerprint);
+    emit hostKeyConfirmationRequested(host, port, fingerprint,
+                                      previousFingerprint, hostKeyChanged);
     return;
   }
 
-  if(hostStatus != SSH_KNOWN_HOSTS_OK) {
+  if (hostStatus != SSH_KNOWN_HOSTS_OK) {
     failLogin("SSH host-key check failed");
     return;
   }
@@ -187,12 +254,26 @@ void SshWorker::confirmHostKey() {
       return;
     }
 
+  if (m_pendingHostKeyChanged) {
+    QString error;
+    if (!removeStoredHostKey(m_pendingHost, m_pendingPort, error)) {
+      failLogin(error);
+      return;
+    }
+  }
+
   // Den unbekannten Host-Key erst nach der Bestätigung speichern.
   if (ssh_session_update_known_hosts(m_session) != SSH_OK) {
     failLogin("Could not save the SSH host key");
     return;
     }
 
+  if (ssh_session_is_known_server(m_session) != SSH_KNOWN_HOSTS_OK) {
+    failLogin("SSH host-key was not updated in the known_hosts file");
+    return;
+  }
+
+  m_pendingHostKeyChanged = false;
   authenticatePendingLogin();
 }
 
@@ -217,6 +298,9 @@ bool SshWorker::authenticatePendingLogin() {
   // Passwort nicht länger als nötig im Worker behalten.
   m_pendingPassword.clear();
   m_waitingForHostKeyConfirmation = false;
+  m_pendingHostKeyChanged = false;
+  m_pendingHost.clear();
+  m_pendingPort = 22;
 
   if (result != SSH_AUTH_SUCCESS) {
     failLogin("SSH authentication failed");
@@ -247,60 +331,20 @@ void SshWorker::checkConnection() {
     return;
   }
 
-  ssh_channel channel = ssh_channel_new(m_session);
-  bool probeSucceeded = false;
+  if (ssh_send_ignore(m_session, "keepalive") == SSH_OK) {
+    m_keepAliveFailures = 0;
+    return;
+  }
 
-  if (channel != nullptr && 
-      ssh_channel_open_session(channel) == SSH_OK &&
-      ssh_channel_request_exec(channel, "/usr/bin/true") == SSH_OK) {
-      QElapsedTimer timeout;
-      timeout.start();
+  qWarning() << "SSH keepalive check failed:"
+             << (m_session != nullptr ? ssh_get_error(m_session)
+                                      : "SSH session is unavailable");
+  ++m_keepAliveFailures;
 
-      char buffer[256];
-      bool readFailed = false;
-
-      while (!ssh_channel_is_eof(channel) && timeout.elapsed()  < 5000) {
-        const int stdoutCount = 
-          ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 0);
-        
-        const int stderrCount = 
-          ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 1);
-        
-        if (stdoutCount == SSH_ERROR || stderrCount == SSH_ERROR) {
-          readFailed = true;
-          break;
-        }
-
-        if (stdoutCount == 0 && stderrCount == 0) {
-          QThread::msleep(10);
-        }
-      }
-
-        probeSucceeded = 
-                        !readFailed && 
-                        ssh_channel_is_eof(channel) &&
-                        ssh_channel_get_exit_status(channel) == 0;
-    }
-
-    if (channel != nullptr) {
-      if (ssh_channel_is_open(channel)) {
-        ssh_channel_close(channel);
-      }
-      ssh_channel_free(channel);
-    }
-
-    if(probeSucceeded) {
-      m_keepAliveFailures = 0;
-      return;
-    }
-
-    qWarning() << "SSH keepalive check failed";
-    ++m_keepAliveFailures;
-
-    if(m_keepAliveFailures >= 2) {
-      cleanup();
-      emit loggedOut();
-    }
+  if (m_keepAliveFailures >= 2) {
+    cleanup();
+    emit loggedOut();
+  }
 }
 
 bool SshWorker::validateGitRequest(const QString &urlText,
@@ -435,8 +479,14 @@ void SshWorker::executeCommandInternal(const QString &command,
     if(ssh_channel_open_session(channel) != SSH_OK) {
         const QString error = QString ("Could not open SSH Channel: %1")
                                       .arg(ssh_get_error(m_session));
+        const bool connectionLost = ssh_is_connected(m_session) == 0;
         closeChannel();
         emit commandFailed(error);
+
+        if (connectionLost) {
+            cleanup();
+            emit loggedOut();
+        }
         return;
     }
 
@@ -472,6 +522,18 @@ void SshWorker::executeCommandInternal(const QString &command,
     bool cancellationTimedOut = false;
 
     QByteArray promptBuffer;
+    QByteArray pendingLiveOutput;
+    QElapsedTimer liveOutputTimer;
+    liveOutputTimer.start();
+    const auto flushLiveOutput = [&pendingLiveOutput, &liveOutputTimer, this]() {
+        if (pendingLiveOutput.isEmpty()) {
+            return;
+        }
+
+        emit commandOutputReceived(QString::fromUtf8(pendingLiveOutput));
+        pendingLiveOutput.clear();
+        liveOutputTimer.restart();
+    };
     bool waitingForInput = false;
 
     while  (true) {
@@ -532,9 +594,8 @@ void SshWorker::executeCommandInternal(const QString &command,
             }
 
             promptBuffer.append(buffer, stdoutCount);
+            pendingLiveOutput.append(buffer, stdoutCount);
             receivedData = true;
-
-            emit commandOutputReceived(QString::fromUtf8(buffer, stdoutCount));
         }
 
         const int stderrCount = ssh_channel_read_nonblocking(channel, buffer, sizeof(buffer), 1);
@@ -562,11 +623,16 @@ void SshWorker::executeCommandInternal(const QString &command,
             }
 
             promptBuffer.append(buffer, stderrCount);
+            pendingLiveOutput.append(buffer, stderrCount);
             receivedData = true;
-
-            emit commandOutputReceived(QString::fromUtf8(buffer, stderrCount));
         }
 
+        if (pendingLiveOutput.size() >= 16 * 1024 ||
+            liveOutputTimer.elapsed() >= 33) {
+            flushLiveOutput();
+        }
+
+        if (receivedData) {
         constexpr qsizetype maxPromptBytes = 256;
 
         if (promptBuffer.size() > maxPromptBytes) {
@@ -601,8 +667,10 @@ void SshWorker::executeCommandInternal(const QString &command,
         if(!waitingForInput && (askForGitUsername || askForGitPassword || 
                                 askForOtherPassword || askForConfirmation || 
                                 askForGenericUsername)) {
+          flushLiveOutput();
           waitingForInput = true;
           emit commandInputRequested(promptText.trimmed(), !askForGitUsername);
+        }
         }
 
         QByteArray response;
@@ -649,6 +717,8 @@ void SshWorker::executeCommandInternal(const QString &command,
         }
     }
 
+    flushLiveOutput();
+
     if (cancellationStage != 0) {
         closeChannel();
         if (!readError.isEmpty()) {
@@ -688,6 +758,11 @@ void SshWorker::executeCommandInternal(const QString &command,
 
 void SshWorker::executePresetCommand(const QString &commandId)
 {
+    if (commandId == "reinstallAll") {
+      executePresetCommand(QStringLiteral("installRepository"));
+      return;
+    }
+
     QString command;
     
     // Set before the commands to true if you need a Pseudo-Terminal
@@ -708,27 +783,39 @@ void SshWorker::executePresetCommand(const QString &commandId)
 
       requestPty = true;
       command = "sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop kisoft-one.service";
-    } 
-    else if (commandId == "rebuildDb") {
+    } else if (commandId == "rebuildDb") {
 
         command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make reinstall'";
+    } else if (commandId == "installRepository") {
+        requestPty = true;
+        const QString installScript =
+            QStringLiteral("set -e\n"
+                           "/kisoft/build/KiSoft-One/wcs/scripts/setupBuildTarget.sh\n"
+            "export KX_SRC_ROOT=\"${KX_SRC_ROOT:-${WCS_ROOT%/wcs}}\"\n"
+            ": \"${KX_SRC_ROOT:?KX_SRC_ROOT/WCS_ROOT is not set}\"\n"
+                           ": \"${KLASSX_DB_CONNECT:?KLASSX_DB_CONNECT is not set; cannot determine installation state}\"\n"
+                           "export KLASSX_HOME=\"$KX_SRC_ROOT\"\n"
+                           "cd \"$KX_SRC_ROOT/test/tool\"\n"
+                           "if printf 'exit\\n' | sqlplus -L \"$KLASSX_DB_CONNECT\" "
+                           "2>&1 | grep -q 'Connected'; then\n"
+                           "  echo 'Existing WMW database detected; running KXrelease force reinstall.'\n"
+                           "  ./KXrelease.sh -f\n"
+                           "else\n"
+                           "  echo 'No WMW database detected; running first installation.'\n"
+                           "  ./KXrelease.sh\n"
+                           "fi");
+        command = "sudo -v && bash -lc " + quoteShellArgument(installScript);
+
     } else if (commandId == "reinstallDb") {
         
         requestPty = true;
         command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && yes y | make install && "
-                  "cd \"$WCS_ROOT\" && updateParameterTables'";
+                  "cd \"$WCS_ROOT/lager\" && updateParameterTables -b core_backup'";
     } else if (commandId == "reinstallKiSoft") {
        
         requestPty = true;
         command = "bash -lc 'cd \"$WCS_ROOT/\" && make release && "
                   "cd \"$WCS_ROOT/lager\" && updateParameterTables -b core_backup/'";
-
-    } else if (commandId == "reinstallAll") {
-        
-        requestPty = true;
-        command = "bash -lc 'cd \"$WCS_ROOT/../wmw\" && yes y | make uninstall && cd \"$KX_SRC_ROOT/afgui\" && " 
-                  "yes y | make uninstall  && sudo env SYSTEMD_COLORS=0 systemctl --no-pager stop nginx-kisoft-one.service && "
-                  "cd \"$WCS_ROOT/../test/tool\" && ./KXrelease.sh'";
     }
     
     else {
@@ -737,8 +824,7 @@ void SshWorker::executePresetCommand(const QString &commandId)
         return;
     }
 
-    if (commandId == "reinstallAll" ||
-        commandId == "reinstallKiSoft" ||
+    if (commandId == "reinstallKiSoft" ||
         commandId == "reinstallDb") {
       command = "sudo -v && " + command;
     }
@@ -953,8 +1039,23 @@ void SshWorker::replaceRepository(const QString &url,
                      "if mv -- \"$stage\" \"$target\"; then "
                      "printf '%s\\n' '__REPOSITORY_INSTALL_SUCCEEDED__'; "
                      "if [ \"$had_old\" -eq 1 ]; then "
+                     "mount_targets=$(findmnt -rn -o TARGET) || "
+                     "{ echo 'Could not list mounted filesystems; old repository was not removed' >&2; exit 8; }; "
+                     "if ! printf '%s\\n' \"$mount_targets\" | "
+                     "awk -v root=\"$old\" 'index($0, root \"/\") == 1 "
+                     "{ print length($0) \"\\t\" $0 }' | sort -rn | cut -f2- | "
+                     "while IFS= read -r mountpoint; do "
+                     "[ -n \"$mountpoint\" ] || continue; "
+                     "echo \"Unmounting old repository mount: $mountpoint\"; "
+                     "if ! sudo umount -- \"$mountpoint\"; then "
+                     "echo \"Normal unmount failed; detaching busy mount: $mountpoint\" >&2; "
+                     "sudo umount --lazy -- \"$mountpoint\" || exit 1; "
+                     "fi; "
+                     "done; then "
+                     "echo \"New repository installed, but old repository mounts could not be detached: $old\" >&2; "
+                     "exit 8; fi; "
                      "rm -rf -- \"$old\" || "
-                     "{ echo 'New repository installed, but old directory remains' >&2; exit 8; }; "
+                     "{ echo \"New repository installed, but old directory remains: $old\" >&2; exit 8; }; "
                      "fi; "
                      "else "
                      "if [ \"$had_old\" -eq 1 ]; then "
@@ -1092,7 +1193,7 @@ void SshWorker::runOracleDataPump(bool restore) {
   } else {
     dataPumpCommand = QStringLiteral("expdp BACKUPTOOL_USER@kxxl "
                                      "DIRECTORY=DATA_PUMP_DIR "
-                                     "DUMPFILE=kisoft_schemas_with_lu.dmp "
+                                     "DUMPFILE=kisoft_schemas.dmp "
                                      "SCHEMAS=%1 "
                                      "NOLOGFILE=YES "
                                      "REUSE_DUMPFILES=YES")
@@ -1218,22 +1319,42 @@ const QString resetSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
                                         "  END;\n"
                                         "\n"
                                         "  PROCEDURE drop_user_if_exists(p_username VARCHAR2) IS\n"
+                                        "    retry_count PLS_INTEGER := 0;\n"
                                         "  BEGIN\n"
-                                        "    EXECUTE IMMEDIATE 'DROP USER ' ||\n"
-                                        "      DBMS_ASSERT.SIMPLE_SQL_NAME(p_username) || ' CASCADE';\n"
-                                        "  EXCEPTION\n"
-                                        "    WHEN OTHERS THEN\n"
-                                        "      IF SQLCODE = -1918 THEN\n"
-                                        "        NULL;\n"
-                                        "      ELSIF SQLCODE = -1940 THEN\n"
-                                        "        RAISE_APPLICATION_ERROR(-20003,\n"
-                                        "          'User ' || p_username || ' ist noch verbunden', TRUE);\n"
-                                        "      ELSE\n"
-                                        "        RAISE;\n"
-                                        "      END IF;\n"
+                                        "    LOOP\n"
+                                        "      BEGIN\n"
+                                        "        EXECUTE IMMEDIATE 'DROP USER ' ||\n"
+                                        "          DBMS_ASSERT.SIMPLE_SQL_NAME(p_username) || ' CASCADE';\n"
+                                        "        RETURN;\n"
+                                        "      EXCEPTION\n"
+                                        "        WHEN OTHERS THEN\n"
+                                        "          IF SQLCODE = -1918 THEN\n"
+                                        "            RETURN;\n"
+                                        "          ELSIF SQLCODE = -1940 THEN\n"
+                                        "            retry_count := retry_count + 1;\n"
+                                        "            IF retry_count >= 30 THEN\n"
+                                        "              RAISE_APPLICATION_ERROR(-20003,\n"
+                                        "                'User ' || p_username || ' ist nach 30 Versuchen noch verbunden', TRUE);\n"
+                                        "            END IF;\n"
+                                        "            FOR s IN (SELECT sid, serial# FROM v$session\n"
+                                        "                      WHERE username = p_username) LOOP\n"
+                                        "              BEGIN\n"
+                                        "                EXECUTE IMMEDIATE 'ALTER SYSTEM KILL SESSION ''' ||\n"
+                                        "                  s.sid || ',' || s.serial# || ''' IMMEDIATE';\n"
+                                        "              EXCEPTION\n"
+                                        "                WHEN OTHERS THEN\n"
+                                        "                  IF SQLCODE NOT IN (-31, -26) THEN RAISE; END IF;\n"
+                                        "              END;\n"
+                                        "            END LOOP;\n"
+                                        "            DBMS_LOCK.SLEEP(1);\n"
+                                        "          ELSE\n"
+                                        "            RAISE;\n"
+                                        "          END IF;\n"
+                                        "      END;\n"
+                                        "    END LOOP;\n"
                                         "  END;\n"
                                         "BEGIN\n"
-                                        "  UTL_FILE.FGETATTR('DATA_PUMP_DIR', 'kisoft_schemas_with_lu.dmp',\n"
+                                        "  UTL_FILE.FGETATTR('DATA_PUMP_DIR', 'kisoft_schemas.dmp',\n"
                                         "                    dump_exists, dump_length, block_size);\n"
                                         "  IF NOT dump_exists OR dump_length = 0 THEN\n"
                                         "    RAISE_APPLICATION_ERROR(-20001,\n"
@@ -1345,6 +1466,13 @@ const QString postImportSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE
                                             "  END IF;\n"
                                             "END;\n"
                                             "/\n"
+                                            "ALTER USER LU ACCOUNT UNLOCK;\n"
+                                            "ALTER USER AFCONFIG ACCOUNT UNLOCK;\n"
+                                            "ALTER USER ARCHIVE ACCOUNT UNLOCK;\n"
+                                            "ALTER USER KLASSX ACCOUNT UNLOCK;\n"
+                                            "ALTER USER KXGUI ACCOUNT UNLOCK;\n"
+                                            "ALTER USER KXREPORT ACCOUNT UNLOCK;\n"
+                                            "ALTER USER USER_MANAGEMENT ACCOUNT UNLOCK;\n"
                                             "EXIT\n");
 
 const QString validateImportedSchemasSql = QStringLiteral("WHENEVER SQLERROR EXIT SQL.SQLCODE\n"
@@ -1375,16 +1503,14 @@ const QString validateImportedSchemasSql = QStringLiteral("WHENEVER SQLERROR EXI
                                                            "EXIT\n");
 
 const QString schemaUserImportParameterFile = QStringLiteral("DIRECTORY=DATA_PUMP_DIR\n"
-                                                             "DUMPFILE=kisoft_schemas_with_lu.dmp\n"
-                                                             "NOLOGFILE=YES\n"
+                                                             "DUMPFILE=kisoft_schemas.dmp\n"
                                                              "SCHEMAS=%1\n"
                                                              "CONTENT=METADATA_ONLY\n"
                                                              "INCLUDE=USER\n")
                                                              .arg(schemas);
                                                              
 const QString schemaObjectsImportParameterFile = QStringLiteral("DIRECTORY=DATA_PUMP_DIR\n"
-                                                                "DUMPFILE=kisoft_schemas_with_lu.dmp\n"
-                                                                "NOLOGFILE=YES\n"
+                                                                "DUMPFILE=kisoft_schemas.dmp\n"
                                                                 "SCHEMAS=%1\n"
                                                                 "EXCLUDE=USER\n"
                                                                 "EXCLUDE=TRIGGER:\"='T_LOGON'\"\n")
@@ -1402,6 +1528,7 @@ const QString encodeSchemaObjectsImportParameterFile = QString::fromLatin1(schem
 const QString restoreScriptTemplate = QStringLiteral("set -o pipefail\n"
                                             "users_parfile=\"\"\n"
                                             "objects_parfile=\"\"\n"
+                                            "restore_log_stamp=\"$(date +%Y%m%d_%H%M%S)\"\n"
                                             "grant_trigger_privileges() {\n"
                                             "  printf '%s' %1 | base64 -d | sqlplus -s / as sysdba\n"
                                             "}\n"
@@ -1446,7 +1573,7 @@ const QString restoreScriptTemplate = QStringLiteral("set -o pipefail\n"
                                             "SELECT 1 FROM dual;\n"
                                             "EXIT SUCCESS\n"
                                             "SQL\n"
-                                            "sqlplus -L -s BACKUPTOOL_USER@kxxl @\"$check_sql\"\n"
+                                            "sqlplus -L BACKUPTOOL_USER@kxxl @\"$check_sql\"\n"
                                             "status=$?\n"
                                             "rm -f -- \"$check_sql\"\n"
                                             "return \"$status\"\n"
@@ -1455,28 +1582,44 @@ const QString restoreScriptTemplate = QStringLiteral("set -o pipefail\n"
                                             "trap 'exit 129' HUP\n"
                                             "trap 'exit 130' INT\n"
                                             "trap 'exit 143' TERM\n"
+                                            "echo '[Restore] Erteile temporäre Datenbankrechte ...'\n"
                                             "grant_trigger_privileges || exit $?\n"
+                                            "echo '[Restore] Prüfe BACKUPTOOL_USER ...'\n"
                                             "if ! validate_backup_login; then\n"
                                             " echo 'BACKUPTOOL_USER-Anmeldung fehlgeschlagen. Restore vor dem Schema-Reset abgebrochen. ' >&2\n"
                                             " exit 93\n"
                                             "fi\n"
+                                            "echo '[Restore] Beende aktive Schema-Sitzungen und setze die Zielschemas zurück ...'\n"
                                             "reset_schemas || { echo 'Schema-Reset fehlgeschlagen; Import abgebrochen.' >&2; exit 1; }\n"
+                                            "echo '[Restore] Erzeuge Data-Pump-Parameterdateien ...'\n"
                                             "users_parfile=$(mktemp /tmp/scriptexecutor-restore-users.XXXXXX.par) || exit 92\n"
                                             "objects_parfile=$(mktemp /tmp/scriptexecutor-restore-objects.XXXXXX.par) || exit 92\n"
                                             "printf '%s' %5 | base64 -d > \"$users_parfile\" || exit 92\n"
                                             "printf '%s' %6 | base64 -d > \"$objects_parfile\" || exit 92\n"
+                                            "printf 'LOGFILE=scriptexecutor_restore_users_%s.log\\nLOGTIME=ALL\\nMETRICS=YES\\n' "
+                                            "\"$restore_log_stamp\" >> \"$users_parfile\" || exit 92\n"
+                                            "printf 'LOGFILE=scriptexecutor_restore_objects_%s.log\\nLOGTIME=ALL\\nMETRICS=YES\\n' "
+                                            "\"$restore_log_stamp\" >> \"$objects_parfile\" || exit 92\n"
+                                            "echo \"[Restore] Data-Pump-Logs liegen in DATA_PUMP_DIR: "
+                                            "scriptexecutor_restore_users_${restore_log_stamp}.log und "
+                                            "scriptexecutor_restore_objects_${restore_log_stamp}.log\"\n"
+                                            "echo '[Restore] Importiere Schema-Benutzer ...'\n"
                                             "impdp BACKUPTOOL_USER@kxxl PARFILE=\"$users_parfile\"\n"
                                             "users_import_status=$?\n"
                                             "if [ \"$users_import_status\" -ne 0 ]; then exit \"$users_import_status\"; fi\n"
+                                            "echo '[Restore] Prüfe importierte Schemas ...'\n"
                                             "if ! validate_imported_schemas; then\n"
                                             "  echo 'Schema-User-Import unvollständig; weitere Import-Schritte werden übersprungen.' >&2\n"
                                             "  exit 92\n"
                                             "fi\n"
+                                            "echo '[Restore] Erteile Abhängigkeiten und importiere Datenbankobjekte ...'\n"
                                             "grant_schema_dependencies || exit $?\n"
                                             "%7\n"
                                             "import_status=$?\n"
                                             "if [ \"$import_status\" -ne 0 ]; then exit \"$import_status\"; fi\n"
+                                            "echo '[Restore] Erstelle Trigger und kompiliere die Schemas ...'\n"
                                             "post_import_setup || exit 91\n"
+                                            "echo '[Restore] Wiederherstellung abgeschlossen.'\n"
                                             "exit \"$import_status\"\n")
                                             .arg(quoteShellArgument(encodedGrantSql))
                                             .arg(quoteShellArgument(encodedRevokeSql))

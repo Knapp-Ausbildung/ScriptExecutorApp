@@ -66,7 +66,8 @@ alias file is loaded so aliases such as `lh` can expand.
 
 - CMake >= 3.21
 - C++17 compatible compiler
-- Qt 6
+- Qt 6.2 or newer
+- libssh
 
 Required Qt modules:
 
@@ -76,16 +77,55 @@ Required Qt modules:
 - Qt6 Quick
 - Qt6 Quick Controls 2
 
-### Ubuntu/Debian
+### Linux development build
+
+Install the Qt 6, libssh development, pkg-config, and C++ build-tool packages
+for your distribution, then run:
 
 ```bash
-cd scripts/
+cmake --preset linux-dev
+cmake --build --preset linux-dev --parallel
+```
 
+### Windows x64 release
+
+Install Visual Studio 2022 with the **Desktop development with C++** workload,
+CMake 3.21 or newer, Qt 6 for the **MSVC 2022 64-bit** compiler, and vcpkg.
+The Qt compiler must match Visual Studio; MinGW Qt builds are not compatible
+with this preset.
+
+Set the paths in PowerShell, then configure and build:
+
+```powershell
+$env:VCPKG_ROOT = "C:\dev\vcpkg"
+$env:QT_ROOT = "C:\Qt\6.8.3\msvc2022_64"
+cmake --preset windows-release
+cmake --build --preset windows-release
+```
+
+The manifest installs libssh through vcpkg. The `package_windows` target runs
+`windeployqt` and copies the vcpkg runtime DLLs into:
+
+```text
+build\windows-release\windows-package\
+```
+
+That folder contains `ScriptExecutorApp.exe` and its runtime dependencies.
+Distribute the whole folder (or zip it); the `.exe` by itself is not a
+self-contained Windows executable.
+
+The Windows build runs the app locally on Windows while SSH commands still
+execute on the connected remote Linux server.
+
+### Ubuntu/Debian dependency helper
+
+The repository also contains a dependency installer for Ubuntu/Debian:
+
+```bash
+cd scripts
 chmod +x dependencyInstaller.sh
-
 ./dependencyInstaller.sh
 ```
-(in case of any missing dependencies in the script please update it)
 
 ## Contact
 

@@ -117,8 +117,13 @@ ApplicationWindow {
     component ThemedDialog: Dialog {
         implicitWidth: Math.max(implicitContentWidth, 420)
         property Item enterFocusTarget: null
+        closePolicy: Popup.CloseOnEscape
 
         onOpened: {
+            const cancelButton = standardButton(Dialog.Cancel)
+            if (cancelButton)
+                cancelButton.text = qsTr("Cancel")
+
             if (enterFocusTarget) {
                 enterFocusTarget.forceActiveFocus()
                 return
@@ -390,6 +395,8 @@ ApplicationWindow {
 
             property bool commandRunning: false
             property int liveOutputChunkCount: 0
+            readonly property bool repositoryInstallPending:
+                appController.repositoryInstallPending
 
             onCommandRunningChanged: {
                 if (commandRunning)
@@ -415,9 +422,6 @@ ApplicationWindow {
             property string pendingAnsiSequence: ""
             property var pendingOutputChunks: []
             property var outputSegments: []
-            property real preservedOutputScrollY: 0
-            property bool outputScrollToEnd: true
-            property bool outputScrollNeedsRestore: false
 
             function escapeOutputHtml(text) {
                 return String(text)
@@ -565,13 +569,7 @@ ApplicationWindow {
                 if (pendingOutputChunks.length === 0)
                     return
 
-                const outputFlickable = commandOutputScroll.contentItem
-                const previousScrollY = outputFlickable.contentY
-                const wasAtBottom = previousScrollY >= Math.max(
-                            0, outputFlickable.contentHeight - outputFlickable.height - 2)
                 const outputIsFiltered = outputSearchTerm.trim().length > 0
-                const shouldStayAtBottom = outputIsFiltered
-                        ? outputScrollToEnd : wasAtBottom
                 const pendingOutput = pendingOutputChunks.join("")
                 pendingOutputChunks = []
                 const formattedChunks = []
@@ -616,19 +614,12 @@ ApplicationWindow {
                     commandOutput.insert(commandOutput.length, appendedHtml)
                 }
 
-                preservedOutputScrollY = previousScrollY
-                outputScrollToEnd = shouldStayAtBottom
-                outputScrollNeedsRestore = outputTruncated ||
-                        (outputIsFiltered && !shouldStayAtBottom)
-                if (outputScrollToEnd || outputScrollNeedsRestore)
-                    outputScrollTimer.restart()
+                outputScrollTimer.restart()
             }
 
             function finishOutput() {
                 flushOutputBuffer()
-                outputScrollToEnd = !outputVerticalScrollBar.pressed
-                if (outputScrollToEnd)
-                    outputScrollTimer.restart()
+                outputScrollTimer.restart()
             }
 
             function syncOutputScrollBars() {
@@ -647,12 +638,6 @@ ApplicationWindow {
                                         flickable.visibleArea.xPosition))
             }
 
-            function outputIsAtBottom() {
-                const flickable = commandOutputScroll.contentItem
-                return flickable.contentY >= Math.max(
-                            0, flickable.contentHeight - flickable.height - 2)
-            }
-
             function clearOutput() {
                 outputFlushTimer.stop()
                 outputScrollTimer.stop()
@@ -662,9 +647,6 @@ ApplicationWindow {
                 outputPlainText = ""
                 outputAnsiColor = ""
                 pendingAnsiSequence = ""
-                preservedOutputScrollY = 0
-                outputScrollToEnd = true
-                outputScrollNeedsRestore = false
                 commandOutput.text = "<span></span>"
                 commandOutputScroll.contentItem.contentX = 0
                 commandOutputScroll.contentItem.contentY = 0
@@ -686,8 +668,6 @@ ApplicationWindow {
                 if (resetScroll === false)
                     return
 
-                outputScrollToEnd = true
-                outputScrollNeedsRestore = false
                 commandOutputScroll.contentItem.contentX = 0
                 outputScrollTimer.restart()
             }
@@ -705,19 +685,8 @@ ApplicationWindow {
                 repeat: false
                 onTriggered: {
                     const outputFlickable = commandOutputScroll.contentItem
-                    if (outputVerticalScrollBar.pressed)
-                        return
-
-                    if (dashboardRoot.outputScrollToEnd) {
-                        outputFlickable.contentY = Math.max(
-                                    0, outputFlickable.contentHeight - outputFlickable.height)
-                    } else if (dashboardRoot.outputScrollNeedsRestore) {
-                        outputFlickable.contentY = Math.min(
-                                    dashboardRoot.preservedOutputScrollY,
-                                    Math.max(0, outputFlickable.contentHeight -
-                                             outputFlickable.height))
-                    }
-                    dashboardRoot.outputScrollNeedsRestore = false
+                    outputFlickable.contentY = Math.max(
+                                0, outputFlickable.contentHeight - outputFlickable.height)
                     dashboardRoot.syncOutputScrollBars()
                 }
             }
@@ -834,6 +803,7 @@ ApplicationWindow {
                         FlatButton {
                             text: "Ausloggen"
                             Accessible.name: text
+                            enabled: !dashboardRoot.commandRunning
                             onClicked: appController.attemptLogout()
                         }
                     }
@@ -899,56 +869,71 @@ ApplicationWindow {
                         }
 
                         ColumnLayout {
+                            id: repositoryStatusActions
                             Layout.preferredWidth: 320
                             Layout.minimumWidth: 320
                             Layout.maximumWidth: 320
                             Layout.fillHeight: true
                             spacing: 6
 
-                            RowLayout {
+                            readonly property bool hasVisibleActionButtons:
+                                appController.installedRepository.length > 0 ||
+                                appController.installedRepositories.length > 1
+
+                            Item {
                                 Layout.fillWidth: true
-                                spacing: 8
+                                Layout.fillHeight: !repositoryStatusActions.hasVisibleActionButtons
+                                implicitHeight: repositoryStatusRow.implicitHeight
 
-                                Rectangle {
-                                    Layout.preferredWidth: 34
-                                    Layout.preferredHeight: 34
-                                    radius: 17
-                                    color: appController.installedRepository.length > 0
-                                           ? "#16a05a" : "#b87920"
+                                RowLayout {
+                                    id: repositoryStatusRow
+                                    anchors.centerIn: parent
+                                    width: repositoryStatusActions.hasVisibleActionButtons
+                                           ? parent.width : implicitWidth
+                                    spacing: 8
 
-                                    Text {
-                                        anchors.centerIn: parent
-                                        text: appController.installedRepository.length > 0 ? "✓" : "!"
-                                        color: "#ffffff"
-                                        font.pixelSize: 19
-                                        font.bold: true
-                                    }
-                                }
+                                    Rectangle {
+                                        Layout.preferredWidth: 34
+                                        Layout.preferredHeight: 34
+                                        radius: 17
+                                        color: appController.installedRepository.length > 0
+                                               ? "#16a05a" : "#b87920"
 
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 3
-
-                                    Text {
-                                        text: appController.installedRepository.length > 0
-                                              ? "Repository bereit" : "Repository nicht geladen"
-                                        color: "#e3edf5"
-                                        font.bold: true
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: appController.installedRepository.length > 0 ? "✓" : "!"
+                                            color: "#ffffff"
+                                            font.pixelSize: 19
+                                            font.bold: true
+                                        }
                                     }
 
-                                    Text {
-                                        text: appController.installedRepositoryInfoLoaded
-                                              ? (appController.installedRepository.length > 0
-                                                 ? "KiSoft-One Repository aktiv"
-                                                 : "Bitte Repository einrichten")
-                                              : "Lade Repository-Status ..."
-                                        color: "#9bb0c0"
-                                        font.pixelSize: 10
+                                    ColumnLayout {
+                                        Layout.fillWidth: repositoryStatusActions.hasVisibleActionButtons
+                                        spacing: 3
+
+                                        Text {
+                                            text: appController.installedRepository.length > 0
+                                                  ? "Repository bereit" : "Repository nicht geladen"
+                                            color: "#e3edf5"
+                                            font.bold: true
+                                        }
+
+                                        Text {
+                                            text: appController.installedRepositoryInfoLoaded
+                                                  ? (appController.installedRepository.length > 0
+                                                     ? "KiSoft-One Repository aktiv"
+                                                     : "Bitte Repository einrichten")
+                                                  : "Lade Repository-Status ..."
+                                            color: "#9bb0c0"
+                                            font.pixelSize: 10
+                                        }
                                     }
                                 }
                             }
 
                             RowLayout {
+                                visible: repositoryStatusActions.hasVisibleActionButtons
                                 Layout.fillWidth: true
                                 spacing: 6
 
@@ -958,6 +943,8 @@ ApplicationWindow {
                                     iconText: "⇄"
                                     labelPixelSize: 12
                                     Accessible.name: text
+                                    visible: appController.installedRepositoryInfoLoaded &&
+                                             appController.installedRepository.length > 0
                                     enabled: !dashboardRoot.commandRunning &&
                                              appController.installedRepository.length > 0 &&
                                              dashboardRoot.kiSoftOneActive
@@ -971,6 +958,7 @@ ApplicationWindow {
                                     labelPixelSize: 12
                                     Accessible.name: text
                                     visible: appController.installedRepository.length > 0
+                                    enabled: !dashboardRoot.commandRunning
                                     onClicked: appController.openInstalledRepository()
                                 }
                             }
@@ -1056,15 +1044,19 @@ ApplicationWindow {
                                             Layout.fillHeight: true
                                             Layout.margins: 0
 
-                                            FlatButton {
+                                            AnimatedCommandButton {
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
                                                 Layout.margins: 0
                                                 text: "Setup Repository"
                                                 iconText: "▤"
                                                 enabled: !dashboardRoot.commandRunning
+                                                running: dashboardRoot.activeCommandButton === "setupRepository"
                                                 Accessible.name: "Import Branch"
-                                                onClicked: selectRepo.open()
+                                                clickHandler: function() {
+                                                    if (!dashboardRoot.commandRunning)
+                                                        selectRepo.open()
+                                                }
                                             }
                                         }
 
@@ -1074,7 +1066,7 @@ ApplicationWindow {
                                             Layout.margins: 0
                                             spacing: 8
 
-                                            FlatButton {
+                                            AnimatedCommandButton {
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
                                                 Layout.minimumWidth: 0
@@ -1082,22 +1074,24 @@ ApplicationWindow {
                                                 Layout.margins: 0
                                                 text: "Fetch Branch"
                                                 iconText: "☁"
+                                                running: dashboardRoot.activeCommandButton === "fetchBranch"
                                                 enabled: !dashboardRoot.commandRunning &&
                                                          appController.installedRepositoryInfoLoaded &&
                                                          appController.installedRepository.length > 0 &&
                                                          appController.installedBranch.length > 0 &&
                                                          dashboardRoot.kiSoftOneActive
-                                                onClicked: {
+                                                clickHandler: function() {
                                                     if (dashboardRoot.commandRunning)
                                                         return
 
+                                                    dashboardRoot.activeCommandButton = "fetchBranch"
                                                     dashboardRoot.commandRunning = true
                                                     commandError.text = ""
                                                     appController.fetchSelectedBranch()
                                                 }
                                             }
 
-                                            FlatButton {
+                                            AnimatedCommandButton {
                                                 Layout.fillWidth: true
                                                 Layout.fillHeight: true
                                                 Layout.minimumWidth: 0
@@ -1105,15 +1099,16 @@ ApplicationWindow {
                                                 Layout.margins: 0
                                                 text: "Pull Branch"
                                                 iconText: "↓"
+                                                running: dashboardRoot.activeCommandButton === "pullBranch"
                                                 enabled: !dashboardRoot.commandRunning &&
                                                          appController.installedRepositoryInfoLoaded &&
                                                          appController.installedRepository.length > 0 &&
                                                          appController.installedBranch.length > 0 &&
                                                          dashboardRoot.kiSoftOneActive
-                                                onClicked: {
+                                                clickHandler: function() {
                                                     if (dashboardRoot.commandRunning)
                                                         return
-
+                                                    dashboardRoot.activeCommandButton = "pullBranch"
                                                     dashboardRoot.commandRunning = true
                                                     commandError.text = ""
                                                     appController.pullSelectedBranch()
@@ -1152,8 +1147,11 @@ ApplicationWindow {
                                             text: "Dump DB"
                                             iconText: "▤"
                                             Accessible.name: text
+                                            visible: appController.installedRepositoryInfoLoaded &&
+                                                     appController.installedRepository.length > 0
                                             running: dashboardRoot.activeCommandButton === "oracleDump"
-                                            enabled: !dashboardRoot.commandRunning
+                                            enabled: !dashboardRoot.commandRunning &&
+                                                     dashboardRoot.kiSoftOneActive
                                             clickHandler: function() {
                                                 oracleCredentialsDialog.restoreMode = false
                                                 oracleCredentialsDialog.open()
@@ -1169,8 +1167,11 @@ ApplicationWindow {
                                             text: "Load dumped DB"
                                             iconText: "↑"
                                             Accessible.name: text
+                                            visible: appController.installedRepositoryInfoLoaded &&
+                                                     appController.installedRepository.length > 0
                                             running: dashboardRoot.activeCommandButton === "oracleRestore"
-                                            enabled: !dashboardRoot.commandRunning
+                                            enabled: !dashboardRoot.commandRunning &&
+                                                     dashboardRoot.kiSoftOneActive
                                             clickHandler: function() {
                                                 if (!dashboardRoot.commandRunning)
                                                     restoreConfirmation.open()
@@ -1193,7 +1194,8 @@ ApplicationWindow {
                                             Accessible.name: text
                                             running: dashboardRoot.activeCommandButton === "rebuildDb"
                                             enabled: !dashboardRoot.commandRunning &&
-                                                     dashboardRoot.kiSoftOneActive
+                                                     dashboardRoot.kiSoftOneActive &&
+                                                     !dashboardRoot.repositoryInstallPending
                                             clickHandler: function() {
                                                 dashboardRoot.runPreset("rebuildDb",
                                                     "Datenbank wird rebuilded ...", "rebuildDb")
@@ -1219,6 +1221,35 @@ ApplicationWindow {
                                         Layout.fillWidth: true
                                         Layout.fillHeight: true
                                         Layout.margins: 0
+
+                                        AnimatedCommandButton {
+                                            Layout.fillWidth: true
+                                            Layout.fillHeight: true
+                                            text: dashboardRoot.repositoryInstallPending
+                                                  ? "Install Repository"
+                                                  : "Install / Reinstall Repository"
+                                            iconText: "▶"
+                                            Accessible.name: text
+                                            running: dashboardRoot.activeCommandButton === "installRepository" ||
+                                                     dashboardRoot.activeCommandButton === "reinstallAll"
+                                            enabled: !dashboardRoot.commandRunning &&
+                                                     dashboardRoot.kiSoftOneActive
+                                            clickHandler: function() {
+                                                const displayCommand = dashboardRoot.repositoryInstallPending
+                                                                       ? "Repository wird installiert ..."
+                                                                       : "Installation wird geprüft ..."
+                                                dashboardRoot.runPresetWithSudoPassword(
+                                                    "installRepository",
+                                                    displayCommand,
+                                                    "installRepository")
+                                            }
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        Layout.margins: 0
                                         spacing: 8
 
                                         AnimatedCommandButton {
@@ -1232,7 +1263,8 @@ ApplicationWindow {
                                             Accessible.name: text
                                             running: dashboardRoot.activeCommandButton === "reinstallDb"
                                             enabled: !dashboardRoot.commandRunning &&
-                                                     dashboardRoot.kiSoftOneActive
+                                                     dashboardRoot.kiSoftOneActive &&
+                                                     !dashboardRoot.repositoryInstallPending
                                             clickHandler: function() {
                                                 dashboardRoot.runPresetWithSudoPassword(
                                                     "reinstallDb",
@@ -1252,7 +1284,8 @@ ApplicationWindow {
                                             Accessible.name: text
                                             running: dashboardRoot.activeCommandButton === "reinstallKiSoft"
                                             enabled: !dashboardRoot.commandRunning &&
-                                                     dashboardRoot.kiSoftOneActive
+                                                     dashboardRoot.kiSoftOneActive &&
+                                                     !dashboardRoot.repositoryInstallPending
                                             clickHandler: function() {
                                                 dashboardRoot.runPresetWithSudoPassword(
                                                     "reinstallKiSoft",
@@ -1262,29 +1295,6 @@ ApplicationWindow {
                                         }
                                     }
 
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        Layout.margins: 0
-                                        spacing: 8
-
-                                        AnimatedCommandButton {
-                                            Layout.fillWidth: true
-                                            Layout.fillHeight: true
-                                            Layout.margins: 0
-                                            text: "Reinstall All"
-                                            iconText: "▶"
-                                            Accessible.name: text
-                                            running: dashboardRoot.activeCommandButton === "reinstallAll"
-                                            enabled: !dashboardRoot.commandRunning &&
-                                                     dashboardRoot.kiSoftOneActive
-                                            clickHandler: function() {
-                                                dashboardRoot.runPresetWithSudoPassword(
-                                                    "reinstallAll", "Alles wird reinstalliert",
-                                                    "reinstallAll")
-                                            }
-                                        }
-                                    }
                                 }
                             }
 
@@ -1521,23 +1531,10 @@ ApplicationWindow {
                                     onPositionChanged: {
                                         if (pressed) {
                                             const flickable = commandOutputScroll.contentItem
-                                            dashboardRoot.outputScrollToEnd = false
-                                            dashboardRoot.outputScrollNeedsRestore = false
                                             flickable.contentY = Math.min(
                                                         Math.max(0, flickable.contentHeight -
                                                                  flickable.height),
                                                         position * flickable.contentHeight)
-                                        }
-                                    }
-                                    onPressedChanged: {
-                                        if (pressed) {
-                                            dashboardRoot.outputScrollToEnd = false
-                                            dashboardRoot.outputScrollNeedsRestore = false
-                                        } else {
-                                            dashboardRoot.outputScrollToEnd =
-                                                    dashboardRoot.outputIsAtBottom()
-                                            if (dashboardRoot.outputScrollNeedsRestore)
-                                                outputScrollTimer.restart()
                                         }
                                     }
                                 }
@@ -1571,21 +1568,12 @@ ApplicationWindow {
                                     function onContentYChanged() {
                                         dashboardRoot.syncOutputScrollBars()
                                     }
-                                    function onMovementStarted() {
-                                        dashboardRoot.outputScrollToEnd = false
-                                    }
-                                    function onMovementEnded() {
-                                        dashboardRoot.outputScrollToEnd =
-                                                dashboardRoot.outputIsAtBottom()
-                                    }
                                     function onContentWidthChanged() {
                                         dashboardRoot.syncOutputScrollBars()
                                     }
                                     function onContentHeightChanged() {
                                         dashboardRoot.syncOutputScrollBars()
-                                        if (dashboardRoot.outputScrollToEnd ||
-                                                dashboardRoot.outputScrollNeedsRestore)
-                                            outputScrollTimer.restart()
+                                        outputScrollTimer.restart()
                                     }
                                     function onWidthChanged() {
                                         dashboardRoot.syncOutputScrollBars()
@@ -1635,8 +1623,20 @@ ApplicationWindow {
                         }
 
                         Text {
-                            text: dashboardRoot.commandRunning ? "Befehl läuft ..." : "Bereit"
+                            id: commandStatus
+                            property int runningDotCount: 1
+                            text: dashboardRoot.commandRunning
+                                  ? "Befehl läuft " + [".  ", ".. ", "..."][runningDotCount - 1]
+                                  : "Bereit"
                             color: dashboardRoot.commandRunning ? "#f5c46a" : "#9bb0c0"
+                        }
+
+                        Timer {
+                            interval: 450
+                            repeat: true
+                            running: dashboardRoot.commandRunning
+                            onTriggered: commandStatus.runningDotCount =
+                                             commandStatus.runningDotCount % 3 + 1
                         }
                     }
                 }
@@ -1690,7 +1690,8 @@ ApplicationWindow {
                                           dashboardRoot.activeCommandButton === "oracleRestore"
                     const reinstallCommand = dashboardRoot.activeCommandButton === "reinstallAll" ||
                                              dashboardRoot.activeCommandButton === "reinstallKiSoft" ||
-                                             dashboardRoot.activeCommandButton === "reinstallDb"
+                                             dashboardRoot.activeCommandButton === "reinstallDb" ||
+                                             dashboardRoot.activeCommandButton === "installRepository"
                     const askForUsername = lowerPrompt.includes("please provide your git remote username") ||
                                            lowerPrompt.includes("username for 'https://");
 
@@ -1753,6 +1754,10 @@ ApplicationWindow {
                     dashboardRoot.commandRunning = true
                     commandError.text = ""
                 }
+
+                function onRepositoryInstallOffered() {
+                    repositoryInstallConfirmation.open()
+                }
             }
             ThemedDialog {
                 id: commandInputDialog
@@ -1803,7 +1808,7 @@ ApplicationWindow {
             standardButtons: Dialog.Yes | Dialog.No
 
         ThemedLabel {
-            text: "Der Restore löscht die Schemas LU, AFCONFIG, ARCHIVE, KLASSX, KXGUI, KXREPORT und USER_MANAGEMENT vollständig und importiert sie neu. Dabei werden vorhandene Daten überschrieben. Fortfahren?"
+            text: "Der Restore löscht die Schemas LU, AFCONFIG, ARCHIVE, KLASSX, KXGUI,\nKXREPORT und USER_MANAGEMENT vollständig und importiert sie neu.\nDabei werden vorhandene Daten überschrieben. \nFortfahren?"
         }
 
         onAccepted: {
@@ -1814,6 +1819,28 @@ ApplicationWindow {
             oracleCredentialsDialog.open()
         }
     }
+
+    ThemedDialog {
+        id: repositoryInstallConfirmation
+        anchors.centerIn: Overlay.overlay
+        modal: true
+        title: "Repository installieren?"
+        standardButtons: Dialog.Yes | Dialog.No
+
+        contentItem: ThemedLabel {
+            text: "Das Repository wurde heruntergeladen. Soll das Repository jetzt installiert werden?"
+        }
+
+        onAccepted: {
+            if (dashboardRoot.commandRunning)
+                return
+
+            dashboardRoot.runPresetWithSudoPassword(
+                "installRepository",
+                "Repository wird installiert ...",
+                "installRepository")
+        }
+    }
         
 
         Connections {
@@ -1821,6 +1848,7 @@ ApplicationWindow {
 
         function onRemoteBranchesLoaded(branches) {
             dashboardRoot.commandRunning = false
+            dashboardRoot.activeCommandButton = ""
             selectRepo.loadingBranches = false;
             selectBranchChoice.model = branches
 
@@ -1842,11 +1870,41 @@ ApplicationWindow {
             }
             dashboardRoot.activeCommandButton= ""
         }
+
+        function onRepositoryInstallOffered() {
+            repositoryInstallConfirmation.open()
+        }
         
         function onCommandOutputReceived(chunk) { 
             dashboardRoot.appendOutput(chunk, true)
         }
     }  
+
+    Connections {
+        target: selectRepo
+
+        function onValidRepositoryLinkEntered() {
+            commandError.text = ""
+            dashboardRoot.clearOutput()
+            dashboardRoot.activeCommandButton = "setupRepository"
+            dashboardRoot.commandRunning = true
+        }
+    }
+
+    Connections {
+        target: replaceRepositoryDialog
+
+        function onRepositoryReplaceRequested() {
+            if (dashboardRoot.commandRunning)
+                return
+
+            dashboardRoot.activeCommandButton = "setupRepository"
+            dashboardRoot.commandRunning = true
+            commandError.text = ""
+            appController.replaceSelectedRepository()
+        }
+    }
+
     ThemedDialog {
         id: gitCredentialsDialog
         anchors.centerIn: Overlay.overlay
@@ -2066,10 +2124,23 @@ ApplicationWindow {
         standardButtons: Dialog.Yes | Dialog.No
 
         property string fingerprint: ""
+        property string previousFingerprint: ""
+        property bool keyChanged: false
 
         contentItem: ThemedLabel {
-            text: qsTr("Prüfe den Fingerprint über einen vertrauenswürdigen Weg:\n\n%1")
-                       .arg(hostKeyDialog.fingerprint)
+            text: hostKeyDialog.keyChanged
+                  ? qsTr("Der gespeicherte Host-Key stimmt nicht mit dem aktuellen Schlüssel überein.\n\n"
+                         + "Bisher gespeichert: %1\n"
+                         + "Aktuell vom Server: %2\n\n"
+                         + "Mit „Ja“ wird der gespeicherte Key ersetzt und die Verbindung fortgesetzt. "
+                         + "Bestätige nur, wenn du den aktuellen Fingerprint über einen vertrauenswürdigen "
+                         + "Weg geprüft hast. Ein unerwarteter Wechsel kann auf einen Angriff hindeuten.")
+                        .arg(hostKeyDialog.previousFingerprint.isEmpty()
+                             ? qsTr("nicht verfügbar")
+                             : hostKeyDialog.previousFingerprint)
+                        .arg(hostKeyDialog.fingerprint)
+                  : qsTr("Prüfe den Fingerprint über einen vertrauenswürdigen Weg:\n\n%1")
+                        .arg(hostKeyDialog.fingerprint)
         }
 
         onAccepted: appController.confirmHostKey()
@@ -2079,10 +2150,14 @@ ApplicationWindow {
     Connections {
         target: appController
 
-        function onHostKeyConfirmationRequested(host, port, fingerprint) {
-            hostKeyDialog.title = 
-                qsTr("Host-Key für %1:%2 bestätigen").arg(host).arg(port)
+        function onHostKeyConfirmationRequested(host, port, fingerprint,
+                                                previousFingerprint, keyChanged) {
+            hostKeyDialog.title = keyChanged
+                ? qsTr("SSH-Host-Key für %1:%2 geändert").arg(host).arg(port)
+                : qsTr("Host-Key für %1:%2 bestätigen").arg(host).arg(port)
             hostKeyDialog.fingerprint = fingerprint
+            hostKeyDialog.previousFingerprint = previousFingerprint
+            hostKeyDialog.keyChanged = keyChanged
             hostKeyDialog.open()
         }
     }
@@ -2092,6 +2167,7 @@ ApplicationWindow {
         anchors.centerIn: Overlay.overlay
         modal: true
         title: "Repository festlegen"
+        signal validRepositoryLinkEntered()
 
         property string repo: ""
         property string errorMessage: ""
@@ -2104,6 +2180,7 @@ ApplicationWindow {
 
             if (appController.sendRepoLink(repoURL.text)) {
                 selectRepo.errorMessage = ""
+                selectRepo.validRepositoryLinkEntered()
                 selectRepo.loadingBranches = true
                 appController.loadRemoteBranches(repoURL.text)
             } else {
@@ -2118,26 +2195,38 @@ ApplicationWindow {
                 text: "Repository Link"
             }
 
-            Row {
-                spacing: 8
             ThemedTextField {
-                width: 400
+                width: parent.width
                 id: repoURL
                 placeholderText: "Link hier einfügen!"
                 onAccepted: selectRepo.loadBranches()
             }
-            FlatButton {
-                implicitWidth: 160
-                enabled: !selectRepo.loadingBranches
-                text: selectRepo.loadingBranches 
-                      ? "Branches werden geladen ..." 
-                      : "Branches laden"
 
-                onClicked: { selectRepo.loadBranches()
+            RowLayout {
+                width: parent.width
+
+                FlatButton {
+                    text: "Cancel"
+                    enabled: !selectRepo.loadingBranches
+                    onClicked: selectRepo.close()
+                }
+
+                Item {
+                    Layout.fillWidth: true
+                }
+
+                FlatButton {
+                    id: loadBranchesButton
+                    implicitWidth: 160
+                    enabled: !selectRepo.loadingBranches
+                    text: selectRepo.loadingBranches
+                          ? "Repository wird geladen ..."
+                          : "Repository laden"
+
+                    onClicked: selectRepo.loadBranches()
                 }
             }
-        
-        }
+
             ThemedLabel {
                 text: selectRepo.errorMessage
                 color: "red"
@@ -2148,6 +2237,7 @@ ApplicationWindow {
     
     ThemedDialog {
         id: selectBranchDialog
+        implicitWidth: 340
         title: "Bitte Branch auswählen"
         anchors.centerIn: Overlay.overlay
         modal: true
@@ -2174,14 +2264,23 @@ ApplicationWindow {
                 onAccepted: selectBranchDialog.confirmSelectedBranch()
             }
 
-            FlatButton {
-                id: confirmBranch
+            RowLayout {
                 width: 300
-                enabled: selectBranchChoice.currentIndex >= 0
-                text: "Branch auswählen"
-                Accessible.name: "Branch auswählen"
+                spacing: 8
 
-                onClicked: selectBranchDialog.confirmSelectedBranch()
+                FlatButton {
+                    Layout.fillWidth: true
+                    text: "Cancel"
+                    onClicked: selectBranchDialog.close()
+                }
+
+                FlatButton {
+                    Layout.fillWidth: true
+                    enabled: selectBranchChoice.currentIndex >= 0
+                    text: "Branch auswählen"
+                    Accessible.name: text
+                    onClicked: selectBranchDialog.confirmSelectedBranch()
+                }
             }
 
       }
@@ -2222,6 +2321,7 @@ ApplicationWindow {
         modal: true
         title: "Repository vollständig ersetzen?"
         standardButtons: Dialog.Yes | Dialog.No
+        signal repositoryReplaceRequested()
 
         contentItem: ThemedLabel {
             text: "Ziel: /kisoft/user/testing\n\n" + 
@@ -2230,6 +2330,6 @@ ApplicationWindow {
                   "Dies kann nicht wieder hergestellt werden! \n\n Fortfahren?"
         }
 
-        onAccepted: appController.replaceSelectedRepository()
+        onAccepted: replaceRepositoryDialog.repositoryReplaceRequested()
     }
 }

@@ -51,8 +51,10 @@ public slots:
 
 signals:
     void hostKeyConfirmationRequested(const QString &host,
-                                      int port,                              
-                                      const QString &fingerprint);
+                                      int port,
+                                      const QString &fingerprint,
+                                      const QString &previousFingerprint,
+                                      bool keyChanged);
     void loginFinished(bool success);
     void loggedOut();
     void commandCompleted(const QString &standardOutput,
@@ -86,9 +88,12 @@ private:
 
     ssh_session m_session = nullptr;
     QString m_pendingPassword;
+    QString m_pendingHost;
+    int m_pendingPort = 22;
     bool m_loggedIn = false;
     bool m_connected = false;
     bool m_waitingForHostKeyConfirmation = false;
+    bool m_pendingHostKeyChanged = false;
     std::atomic_bool m_cancelRequested = false;
 
     QMutex m_inputMutex;

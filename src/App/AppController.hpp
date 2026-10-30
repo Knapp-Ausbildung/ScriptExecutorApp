@@ -43,6 +43,9 @@ class AppController : public QObject {
   Q_PROPERTY(QString activeRepositoryType
              READ activeRepositoryType
              NOTIFY installedRepositoryChanged)
+  Q_PROPERTY(bool repositoryInstallPending
+             READ repositoryInstallPending
+             NOTIFY installedRepositoryChanged)
 
 public:
   // parent ist optional, aber in Qt üblich.
@@ -60,6 +63,7 @@ public:
 
   QVariantList installedRepositories() const;
   QString activeRepositoryType() const;
+  bool repositoryInstallPending() const;
   void selectInstallRepository(const QString &type);
 
 public slots: // public slots sind für QML aufrufbar.
@@ -101,6 +105,7 @@ public slots: // public slots sind für QML aufrufbar.
 
   void createOracleDump();
   void restoreOracleDump();
+  void installDownloadedRepository();
 
 
 signals:
@@ -113,7 +118,9 @@ signals:
 
   void hostKeyConfirmationRequested(const QString &host, 
                                     int port,
-                                    const QString &fingerprint);
+                                    const QString &fingerprint,
+                                    const QString &previousFingerprint,
+                                    bool keyChanged);
   
   void commandCompleted(const QString &standardOutput,
                         const QString &standardError,
@@ -126,6 +133,7 @@ signals:
   void remoteBranchesLoaded(const QStringList &branches);
   void remoteBranchesFailed(const QString &message);
   void installedRepositoryChanged();
+  void repositoryInstallOffered();
 
 
 private:
@@ -134,6 +142,8 @@ private:
   void writeCommandLog(const QString &standardOutput,
                        const QString & standardError,
                        int exitStatus) const;
+  bool clearLogArchive() const;
+  void offerRepositoryInstallIfReady();
   
   // Aktueller Screen / Zustand der App.
   // Beispiele:
@@ -156,6 +166,9 @@ private:
   QVariantList m_installedRepositories;
   QString m_activeRepositoryType;
   QString m_repositoryTypeToActivateAfterReplace;
+  QString m_repositoryTypePendingInstall;
+  bool m_repositoryInstallOfferPending = false;
+  bool m_installingDownloadedRepository = false;
 
   bool isKiSoftOneActive() const;
 

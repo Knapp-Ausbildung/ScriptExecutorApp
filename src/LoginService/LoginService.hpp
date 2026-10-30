@@ -23,7 +23,9 @@ public:
 
 signals:
   void hostKeyConfirmationRequested(const QString &host, int port, 
-                                  const QString &fingerprint);
+                                  const QString &fingerprint,
+                                  const QString &previousFingerprint,
+                                  bool keyChanged);
   void loginFinished(bool success);
   void loggedOut();
   void loginRequested(const QString &host, const QString &username,
